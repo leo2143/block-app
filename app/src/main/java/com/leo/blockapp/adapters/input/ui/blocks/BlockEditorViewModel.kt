@@ -27,8 +27,9 @@ import javax.inject.Inject
  * Input adapter for the block editor. It only knows input ports.
  *
  * Validation is live: the editor builds a draft with the effective name and asks [ValidateBlock]. A violation is
- * visible once its field is touched or after a Save attempt. Save is always enabled; tapping it with errors shows all
- * of them and never calls [SaveBlock]. Every user change is mirrored into the [SavedStateHandle] so the draft survives
+ * visible once its field is touched or after a Save attempt. Save is enabled except while a save is in flight; tapping
+ * it with errors shows all of them and never calls [SaveBlock]. Once saved, further Save taps and edits are ignored.
+ * Every user change is mirrored into the [SavedStateHandle] so the draft survives
  * process death.
  */
 @HiltViewModel
@@ -68,7 +69,7 @@ class BlockEditorViewModel @Inject constructor(
         it.copy(selectedPackages = selection)
     }
 
-    fun setSearchQuery(query: String) = edit { it.copy(searchQuery = query) }
+    fun setSearchQuery(query: String) = edit(clearsDomainViolations = false) { it.copy(searchQuery = query) }
 
     fun setLimitText(text: String) = edit(EditorField.LIMIT) { it.copy(limit = MinutesInput.parse(text)) }
 
@@ -89,6 +90,7 @@ class BlockEditorViewModel @Inject constructor(
     /** The user left [field]: its violations become visible. Not part of the persisted draft. */
     fun touchField(field: EditorField) {
         val current = ready() ?: return
+        if (current.isSaving) return
         _uiState.value = recomputed(current.copy(touchedFields = current.touchedFields + field))
     }
 
@@ -99,7 +101,9 @@ class BlockEditorViewModel @Inject constructor(
     fun save() = submit(confirmedMovePackages = emptySet())
 
     fun confirmMove() {
-        val conflicts = ready()?.pendingMoves ?: return
+        val current = ready() ?: return
+        if (current.saved) return
+        val conflicts = current.pendingMoves ?: return
         submit(confirmedMovePackages = conflicts.map { it.packageName }.toSet())
     }
 
@@ -110,7 +114,7 @@ class BlockEditorViewModel @Inject constructor(
 
     private fun submit(confirmedMovePackages: Set<String>) {
         val current = ready() ?: return
-        if (current.isSaving) return
+        if (current.isSaving || current.saved) return
 
         val attempted = recomputed(current.copy(submitAttempted = true))
         if (hasBlockingErrors(attempted)) {
@@ -118,8 +122,9 @@ class BlockEditorViewModel @Inject constructor(
             return
         }
 
-        // isSaving is set before the coroutine starts, so a second tap can never slip in.
-        _uiState.value = attempted.copy(isSaving = true, pendingMoves = null)
+        // isSaving is set before the coroutine starts, so a second tap can never slip in. pendingMoves stays until
+        // a result arrives, so a failed write keeps the move dialog and a second confirmation reaches the guard.
+        _uiState.value = attempted.copy(isSaving = true)
         val draft = toDraft(attempted)
         viewModelScope.launch {
             try {
@@ -135,11 +140,11 @@ class BlockEditorViewModel @Inject constructor(
     private fun handleResult(result: SaveBlockResult) {
         val current = ready() ?: return
         when (result) {
-            is SaveBlockResult.Saved -> _uiState.value = current.copy(saved = true)
+            is SaveBlockResult.Saved -> _uiState.value = current.copy(saved = true, pendingMoves = null)
             is SaveBlockResult.AppsInOtherBlocks -> _uiState.value = current.copy(pendingMoves = result.conflicts)
             is SaveBlockResult.Invalid -> {
                 domainViolations = result.violations
-                _uiState.value = recomputed(current.copy(submitAttempted = true))
+                _uiState.value = recomputed(current.copy(submitAttempted = true, pendingMoves = null))
             }
         }
     }
@@ -151,7 +156,8 @@ class BlockEditorViewModel @Inject constructor(
     /** True when the screen can leave now; false when the discard dialog is shown instead. */
     fun onBackRequested(): Boolean {
         val current = ready() ?: return true
-        if (current.saved || snapshotOf(current) == initialSnapshot) return true
+        if (current.isSaving) return false
+        if (current.saved ||snapshotOf(current) == initialSnapshot) return true
         _uiState.value = current.copy(showDiscardDialog = true)
         return false
     }
@@ -261,9 +267,14 @@ class BlockEditorViewModel @Inject constructor(
 
     private fun ready(): BlockEditorUiState.Ready? = _uiState.value as? BlockEditorUiState.Ready
 
-    private fun edit(touch: EditorField? = null, transform: (BlockEditorUiState.Ready) -> BlockEditorUiState.Ready) {
+    private fun edit(
+        touch: EditorField? = null,
+        clearsDomainViolations: Boolean = true,
+        transform: (BlockEditorUiState.Ready) -> BlockEditorUiState.Ready,
+    ) {
         val current = ready() ?: return
-        domainViolations = emptySet()
+        if (current.isSaving) return
+        if (clearsDomainViolations) domainViolations = emptySet()
         var next = transform(current)
         if (touch != null) next = next.copy(touchedFields = next.touchedFields + touch)
         next = recomputed(next)
