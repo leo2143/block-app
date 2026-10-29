@@ -11,9 +11,16 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * In-memory repository. [update] is serialized with a [Mutex] so it behaves like a DataStore edit,
- * and every non-empty write is recorded in [writes].
+ * and every non-empty write is recorded in [writes]. Enforces the [BlockChanges] contract.
+ *
+ * [beforeApply] runs after the transform and before the changes are applied, i.e. inside the
+ * read-then-write window. Tests use it to suspend (e.g. `yield()`) so concurrent updates really
+ * interleave unless the lock serializes them.
  */
-class FakeBlockRepository(initialBlocks: List<Block> = emptyList()) : BlockRepository {
+class FakeBlockRepository(
+    initialBlocks: List<Block> = emptyList(),
+    private val beforeApply: suspend () -> Unit = {},
+) : BlockRepository {
 
     private val blocksState = MutableStateFlow(initialBlocks)
     private val updateMutex = Mutex()
@@ -27,10 +34,14 @@ class FakeBlockRepository(initialBlocks: List<Block> = emptyList()) : BlockRepos
 
     override suspend fun <T> update(transform: (current: List<Block>) -> BlockUpdate<T>): T =
         updateMutex.withLock {
-            val blockUpdate = transform(blocksState.value)
+            val snapshot = blocksState.value
+            val blockUpdate = transform(snapshot)
             val changes = blockUpdate.changes
+            val upsertIds = changes.upserts.map { it.id }
+            require(upsertIds.size == upsertIds.toSet().size) { "Duplicate ids in upserts: $upsertIds" }
+            beforeApply()
             if (changes.upserts.isNotEmpty() || changes.deletedIds.isNotEmpty()) {
-                blocksState.value = apply(blocksState.value, changes)
+                blocksState.value = apply(snapshot, changes)
                 recordedWrites += changes
             }
             blockUpdate.result

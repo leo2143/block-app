@@ -13,6 +13,7 @@ import com.leo.blockapp.domain.model.MoveConflict
 import com.leo.blockapp.domain.model.SaveBlockResult
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -176,13 +177,7 @@ class SaveBlockUseCaseTest {
         val result = saveBlockOver(repository)(draft(), confirmedMovePackages = setOf(instagram.packageName))
 
         val saved = result as SaveBlockResult.Saved
-        assertEquals(
-            listOf(
-                block("B1", x.packageName),
-                saved.block,
-            ).sortedBy { it.id },
-            repository.getBlocks().sortedBy { it.id },
-        )
+        assertEquals(listOf(block("B1", x.packageName), saved.block), repository.getBlocks())
         assertEquals(1, repository.writes.size)
         assertEquals(
             summary(
@@ -270,7 +265,7 @@ class SaveBlockUseCaseTest {
             mapOf("B1" to setOf(instagram.packageName), "B2" to setOf(x.packageName)),
             saved.summary.removedPackages,
         )
-        assertEquals(listOf("B1", "generated-1"), repository.getBlocks().map { it.id }.sorted())
+        assertEquals(listOf(block("B1", "keep1"), saved.block), repository.getBlocks())
     }
 
     @Test
@@ -285,7 +280,7 @@ class SaveBlockUseCaseTest {
         val saved = result as SaveBlockResult.Saved
         assertEquals(emptySet<String>(), saved.summary.movedPackages)
         assertEquals(setOf(saved.block.id), saved.summary.affectedBlockIds)
-        assertEquals(block("B1", x.packageName), repository.getBlocks().first { it.id == "B1" })
+        assertEquals(listOf(block("B1", x.packageName), saved.block), repository.getBlocks())
     }
 
     @Test
@@ -373,7 +368,9 @@ class SaveBlockUseCaseTest {
 
     @Test
     fun `concurrent saves of the same app give one Saved and one conflict`() = runTest {
-        val repository = FakeBlockRepository()
+        // yield() inside the repository's read-then-write window forces the two saves to interleave
+        // unless the repository serializes them.
+        val repository = FakeBlockRepository(beforeApply = { yield() })
         val saveBlock = saveBlockOver(repository)
 
         val first = async { saveBlock(draft(name = "One")) }
@@ -383,5 +380,111 @@ class SaveBlockUseCaseTest {
         assertEquals(1, results.count { it is SaveBlockResult.Saved })
         assertEquals(1, results.count { it is SaveBlockResult.AppsInOtherBlocks })
         assertEquals(1, repository.getBlocks().size)
+    }
+
+    @Test
+    fun `editing a block while confirming moves from two other blocks updates all three`() = runTest {
+        val repository = FakeBlockRepository(
+            listOf(
+                block("B1", instagram.packageName, "old"),
+                block("B2", x.packageName, "k"),
+                block("B3", tiktok.packageName),
+            ),
+        )
+
+        val result = saveBlockOver(repository)(
+            draft(id = "B1", packageNames = listOf(instagram.packageName, x.packageName, tiktok.packageName)),
+            confirmedMovePackages = setOf(x.packageName, tiktok.packageName),
+        )
+
+        val saved = result as SaveBlockResult.Saved
+        val expectedTarget = block("B1", instagram.packageName, x.packageName, tiktok.packageName, name = "Redes")
+        assertEquals(listOf(expectedTarget, block("B2", "k")), repository.getBlocks())
+        assertEquals(
+            listOf(instagram.packageName, x.packageName, tiktok.packageName),
+            repository.getBlocks().first().packageNames.toList(),
+        )
+        val write = repository.writes.single()
+        assertEquals(listOf("B1", "B2"), write.upserts.map { it.id })
+        assertEquals(setOf("B3"), write.deletedIds)
+        assertEquals(
+            summary(
+                affected = setOf("B1", "B2", "B3"),
+                emptied = setOf("B3"),
+                moved = setOf(x.packageName, tiktok.packageName),
+                added = mapOf("B1" to setOf(x.packageName, tiktok.packageName)),
+                removed = mapOf(
+                    "B1" to setOf("old"),
+                    "B2" to setOf(x.packageName),
+                    "B3" to setOf(tiktok.packageName),
+                ),
+            ),
+            saved.summary,
+        )
+    }
+
+    @Test
+    fun `moving an app out of a paused source keeps the source paused`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName, "k", enabled = false)))
+
+        val result = saveBlockOver(repository)(draft(), confirmedMovePackages = setOf(instagram.packageName))
+
+        val saved = result as SaveBlockResult.Saved
+        assertEquals(listOf(block("B1", "k", enabled = false), saved.block), repository.getBlocks())
+    }
+
+    @Test
+    fun `will-be-deleted is reported per source when sources are mixed`() = runTest {
+        val repository = FakeBlockRepository(
+            listOf(block("B1", instagram.packageName, "k", name = "One"), block("B2", x.packageName, name = "Two")),
+        )
+
+        val result = saveBlockOver(repository)(draft(packageNames = listOf(instagram.packageName, x.packageName)))
+
+        val conflicts = (result as SaveBlockResult.AppsInOtherBlocks).conflicts
+        assertEquals(
+            listOf(instagram.packageName to false, x.packageName to true),
+            conflicts.map { it.packageName to it.fromBlockWillBeDeleted },
+        )
+    }
+
+    @Test
+    fun `a modified source keeps the order of its remaining packages`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a", instagram.packageName, "b", "c")))
+
+        saveBlockOver(repository)(draft(), confirmedMovePackages = setOf(instagram.packageName))
+
+        assertEquals(listOf("a", "b", "c"), repository.getBlocks().first().packageNames.toList())
+    }
+
+    @Test
+    fun `a name of exactly 40 characters with surrounding spaces is saved and 41 is invalid`() = runTest {
+        val repository = FakeBlockRepository()
+        val saveBlock = saveBlockOver(repository)
+
+        val atLimit = saveBlock(draft(name = "  " + "a".repeat(40) + "  "))
+        val overLimit = saveBlock(draft(name = "  " + "a".repeat(41) + "  ", packageNames = listOf(x.packageName)))
+
+        assertEquals("a".repeat(40), (atLimit as SaveBlockResult.Saved).block.name)
+        assertEquals(SaveBlockResult.Invalid(setOf(BlockViolation.NAME_TOO_LONG)), overLimit)
+        assertEquals(1, repository.getBlocks().size)
+    }
+
+    @Test
+    fun `apps in other blocks does not consume an id from the generator`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName)))
+
+        saveBlockOver(repository)(draft())
+
+        assertEquals(0, idGenerator.generatedCount)
+    }
+
+    @Test
+    fun `app labels are fetched once per save`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName, "k")))
+
+        saveBlockOver(repository)(draft(packageNames = listOf(instagram.packageName, x.packageName)))
+
+        assertEquals(1, catalog.requestCount)
     }
 }
