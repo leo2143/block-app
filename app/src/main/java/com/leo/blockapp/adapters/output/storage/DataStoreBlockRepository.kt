@@ -9,10 +9,11 @@ import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.ports.output.BlockChanges
 import com.leo.blockapp.domain.ports.output.BlockRepository
 import com.leo.blockapp.domain.ports.output.BlockUpdate
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
 import java.io.IOException
 import javax.inject.Inject
 
@@ -21,7 +22,8 @@ import javax.inject.Inject
  *
  * [update] reads, transforms, applies the changes and encodes inside ONE `dataStore.edit`, so DataStore's own
  * serialization of edits is what makes every read-validate-write atomic. Reads swallow only IOException (accepted
- * risk: an unreadable store shows an empty list); any other failure is rethrown. A write IOException propagates.
+ * risk: an unreadable store shows an empty list, and observation retries with a bounded backoff so it recovers);
+ * any other failure is rethrown. A write IOException propagates.
  */
 class DataStoreBlockRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
@@ -29,7 +31,13 @@ class DataStoreBlockRepository @Inject constructor(
 
     override fun observeBlocks(): Flow<List<Block>> =
         dataStore.data
-            .catch { failure -> if (failure is IOException) emit(emptyPreferences()) else throw failure }
+            .retryWhen { failure, attempt ->
+                if (failure !is IOException) return@retryWhen false
+                // Observers see an empty list, and the stream stays alive to pick the store up once it recovers.
+                emit(emptyPreferences())
+                delay((RETRY_BASE_DELAY_MS shl attempt.toInt().coerceAtMost(MAX_BACKOFF_SHIFT)).coerceAtMost(RETRY_MAX_DELAY_MS))
+                true
+            }
             .map { preferences -> BlockJsonMapper.decode(preferences[BLOCKS_KEY]) }
 
     override suspend fun getBlocks(): List<Block> = observeBlocks().first()
@@ -76,5 +84,8 @@ class DataStoreBlockRepository @Inject constructor(
 
     internal companion object {
         val BLOCKS_KEY = stringPreferencesKey("blocks_json")
+        private const val RETRY_BASE_DELAY_MS = 500L
+        private const val RETRY_MAX_DELAY_MS = 30_000L
+        private const val MAX_BACKOFF_SHIFT = 10
     }
 }

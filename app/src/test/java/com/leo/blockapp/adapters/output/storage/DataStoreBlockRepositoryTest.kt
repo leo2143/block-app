@@ -15,7 +15,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -73,15 +75,31 @@ class DataStoreBlockRepositoryTest : BlockRepositoryContract() {
     fun `observeBlocks emits the initial list and every change`() = runTest {
         val repository = newRepository()
 
-        val emissions = async(Dispatchers.IO) { repository.observeBlocks().take(3).toList() }
-        repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B1", "a"))), Unit) }
-        repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b"))), Unit) }
+        val received = Channel<List<String>>(Channel.UNLIMITED)
+        val collector = ioScope.launch {
+            repository.observeBlocks().collect { blocks -> received.send(blocks.map { it.id }) }
+        }
 
-        val seen = emissions.await()
-        assertEquals(
-            listOf(emptyList(), listOf("B1"), listOf("B1", "B2")),
-            seen.map { blocks -> blocks.map { it.id } },
-        )
+        // Each update waits for the previous state, so subscription timing and conflation cannot affect the result.
+        received.awaitState(emptyList())
+        repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B1", "a"))), Unit) }
+        received.awaitState(listOf("B1"))
+        repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b"))), Unit) }
+        received.awaitState(listOf("B1", "B2"))
+
+        collector.cancel()
+    }
+
+    @Test
+    fun `observeBlocks keeps emitting after a read IOException once the store recovers`() = runTest {
+        val stored = BlockJsonMapper.encode(listOf(block("B1", "a")))
+        val dataStore = RecoveringDataStore(stored, failures = 1)
+        val repository = DataStoreBlockRepository(dataStore)
+
+        val emissions = repository.observeBlocks().take(2).toList()
+
+        assertEquals(listOf(emptyList(), listOf("B1")), emissions.map { blocks -> blocks.map { it.id } })
+        assertEquals(2, dataStore.collections)
     }
 
     @Test
@@ -175,6 +193,32 @@ class DataStoreBlockRepositoryTest : BlockRepositoryContract() {
         }.awaitAll()
 
         assertEquals((0 until 50).map { "B$it" }, repository.getBlocks().map { it.id })
+    }
+
+    private suspend fun Channel<List<String>>.awaitState(expected: List<String>) {
+        while (receive() != expected) {
+            // Skip states that were observed before the expected one.
+        }
+    }
+
+    /** A [DataStore] whose data flow throws an IOException for the first [failures] collections, then serves [stored]. */
+    private class RecoveringDataStore(stored: String, private val failures: Int) : DataStore<Preferences> {
+
+        var collections = 0
+            private set
+
+        private val recovered = emptyPreferences().toMutablePreferences().apply {
+            this[DataStoreBlockRepository.BLOCKS_KEY] = stored
+        }
+
+        override val data: Flow<Preferences> = flow {
+            collections++
+            if (collections <= failures) throw IOException("read failed")
+            emit(recovered)
+        }
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            transform(recovered)
     }
 
     /** A [DataStore] stub whose reads and/or writes fail, to exercise the adapter's error handling. */
