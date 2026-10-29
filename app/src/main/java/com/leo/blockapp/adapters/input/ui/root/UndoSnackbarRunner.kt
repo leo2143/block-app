@@ -28,9 +28,11 @@ typealias UndoSnackbarPresenter = suspend (
  * without calling [onUndo] or [onDismissed], so the entry stays queued and a restarted runner offers it again.
  *
  * A retry snackbar that times out is "parked": the entry stays queued as RESTORE_FAILED but this runner does not
- * show it again until [unpark] is called or the queue gains a new entry. A new runner starts with nothing parked.
+ * show it again until [unpark] is called or the queue gains a new entry. Every [run] start begins with nothing parked,
+ * so the same instance can be restarted.
  *
- * [run] and [unpark] are meant to be called from the main thread.
+ * Single collector: call [run] from one coroutine at a time. [run] and [unpark] are meant to be called from the
+ * main thread.
  */
 class UndoSnackbarRunner(
     private val queue: StateFlow<List<PendingDeletion>>,
@@ -43,8 +45,10 @@ class UndoSnackbarRunner(
     private var knownIds = emptySet<String>()
     private val unparkVersion = MutableStateFlow(0)
 
-    /** Runs until cancelled. */
+    /** Runs until cancelled. Every start begins with nothing parked. */
     suspend fun run() {
+        parkedIds.clear()
+        knownIds = emptySet()
         while (true) {
             present(awaitNextEntry())
         }
@@ -96,7 +100,11 @@ class UndoSnackbarRunner(
                 when (outcome) {
                     UndoSnackbarOutcome.ACTION_PERFORMED -> onUndo(entry.deleted)
                     UndoSnackbarOutcome.DISMISSED -> onDismissed(entry.deleted)
-                    UndoSnackbarOutcome.TIMED_OUT -> parkedIds += entry.id
+                    UndoSnackbarOutcome.TIMED_OUT -> {
+                        parkedIds += entry.id
+                        // Entries queued while this snackbar was showing are not "new" relative to the parking.
+                        knownIds = queue.value.map { it.id }.toSet()
+                    }
                 }
             }
             PendingStatus.RESTORING -> Unit

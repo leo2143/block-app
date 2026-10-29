@@ -36,8 +36,12 @@ class UndoSnackbarRunnerTest {
         /** Scripted outcomes consumed one per presenter call; when exhausted the snackbar stays on screen. */
         val script = ArrayDeque<UndoSnackbarOutcome>()
 
+        /** Runs while a snackbar is on screen, with the zero-based index of the presenter call. */
+        var onCall: (Int) -> Unit = {}
+
         val presenter: UndoSnackbarPresenter = { message, actionLabel, duration, withDismissAction ->
             calls += Call(message, actionLabel, duration, withDismissAction)
+            onCall(calls.size - 1)
             script.removeFirstOrNull() ?: awaitCancellation()
         }
 
@@ -307,6 +311,49 @@ class UndoSnackbarRunnerTest {
 
         assertEquals(2, h.calls.size)
         second.cancel()
+    }
+
+    @Test
+    fun `restarting run on the same instance re-offers parked entries`() = runTest {
+        val h = Harness()
+        h.add("B1", PendingStatus.RESTORE_FAILED)
+        h.script += UndoSnackbarOutcome.TIMED_OUT
+        val runner = h.newRunner()
+
+        val first = start(runner)
+        advanceUntilIdle()
+        first.cancel()
+        advanceUntilIdle()
+        assertEquals(1, h.calls.size)
+
+        val second = start(runner)
+        advanceUntilIdle()
+
+        assertEquals(2, h.calls.size)
+        assertEquals("No se pudo restaurar.", h.calls[1].message)
+        second.cancel()
+    }
+
+    @Test
+    fun `an entry added while the retry snackbar shows is offered before the parked one returns`() = runTest {
+        val h = Harness()
+        h.add("B1", PendingStatus.RESTORE_FAILED)
+        h.script += UndoSnackbarOutcome.TIMED_OUT
+        h.script += UndoSnackbarOutcome.DISMISSED
+        h.onCall = { index -> if (index == 0) h.add("B2") }
+
+        val job = start(h.newRunner())
+        advanceUntilIdle()
+
+        assertEquals(listOf("No se pudo restaurar.", "«Name B2» eliminado"), h.calls.map { it.message })
+        assertEquals(listOf("B2"), h.dismissed)
+        assertEquals(listOf("B1"), h.queue.value.map { it.id })
+
+        h.add("B3")
+        advanceUntilIdle()
+
+        assertEquals("No se pudo restaurar.", h.calls[2].message)
+        job.cancel()
     }
 
     @Test
