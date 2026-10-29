@@ -1,5 +1,6 @@
 package com.leo.blockapp.domain.usecases
 
+import com.leo.blockapp.domain.blocks.ownerBlockByPackageName
 import com.leo.blockapp.domain.model.BlockReference
 import com.leo.blockapp.domain.model.SelectableApp
 import com.leo.blockapp.domain.ports.input.ListSelectableApps
@@ -20,12 +21,8 @@ class ListSelectableAppsUseCase(
         val launchableApps = installedAppCatalog.getLaunchableApps()
         val blocks = blockRepository.getBlocks()
 
-        val ownerByPackageName = LinkedHashMap<String, BlockReference>()
-        blocks.filter { it.id != editingBlockId }.forEach { block ->
-            block.packageNames.forEach { packageName ->
-                ownerByPackageName.putIfAbsent(packageName, BlockReference(block.id, block.name))
-            }
-        }
+        val ownerByPackageName = ownerBlockByPackageName(blocks, excludedBlockId = editingBlockId)
+            .mapValues { (_, owner) -> BlockReference(owner.id, owner.name) }
 
         val installedPackageNames = launchableApps.map { it.packageName }.toSet()
         val installedApps = launchableApps.map { app ->

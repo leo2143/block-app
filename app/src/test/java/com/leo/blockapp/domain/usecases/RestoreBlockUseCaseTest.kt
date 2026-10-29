@@ -8,6 +8,7 @@ import com.leo.blockapp.domain.model.BlockChangeSummary
 import com.leo.blockapp.domain.model.BlockDraft
 import com.leo.blockapp.domain.model.BlockReference
 import com.leo.blockapp.domain.model.BlockRule
+import com.leo.blockapp.domain.model.DeletedBlock
 import com.leo.blockapp.domain.model.InstalledApp
 import com.leo.blockapp.domain.model.RestoreBlockResult
 import com.leo.blockapp.domain.model.SaveBlockResult
@@ -47,6 +48,8 @@ class RestoreBlockUseCaseTest {
 
     private fun restoreBlockOver(repository: FakeBlockRepository) = RestoreBlockUseCase(repository, catalog)
 
+    private fun deletedAt(index: Int, block: Block) = DeletedBlock(block, index)
+
     private fun summary(blockId: String, added: Set<String>) = BlockChangeSummary(
         affectedBlockIds = setOf(blockId),
         emptiedBlockIds = emptySet(),
@@ -61,7 +64,7 @@ class RestoreBlockUseCaseTest {
         val other = block("B2", tiktok.packageName)
         val repository = FakeBlockRepository(listOf(other))
 
-        val result = restoreBlockOver(repository)(deleted)
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted))
 
         assertEquals(RestoreBlockResult.Restored(deleted, summary("B1", deleted.packageNames)), result)
         assertEquals(listOf(other, deleted), repository.getBlocks())
@@ -76,7 +79,7 @@ class RestoreBlockUseCaseTest {
         val newOwner = block("B2", instagram.packageName)
         val repository = FakeBlockRepository(listOf(newOwner))
 
-        val result = restoreBlockOver(repository)(deleted)
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted))
 
         val expectedStored = block("B1", x.packageName)
         assertEquals(
@@ -96,7 +99,7 @@ class RestoreBlockUseCaseTest {
         val deleted = block("B1", instagram.packageName, x.packageName, enabled = false)
         val repository = FakeBlockRepository(listOf(block("B2", instagram.packageName)))
 
-        val result = restoreBlockOver(repository)(deleted) as RestoreBlockResult.PartiallyRestored
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted)) as RestoreBlockResult.PartiallyRestored
 
         assertEquals(deleted.id, result.block.id)
         assertEquals(deleted.name, result.block.name)
@@ -110,7 +113,7 @@ class RestoreBlockUseCaseTest {
         val pausedOwner = block("B2", instagram.packageName, enabled = false)
         val repository = FakeBlockRepository(listOf(pausedOwner))
 
-        val result = restoreBlockOver(repository)(deleted) as RestoreBlockResult.PartiallyRestored
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted)) as RestoreBlockResult.PartiallyRestored
 
         assertEquals(
             listOf(SkippedApp(instagram.packageName, "Instagram", BlockReference("B2", "Block B2"))),
@@ -127,7 +130,7 @@ class RestoreBlockUseCaseTest {
             listOf(block("B2", x.packageName), block("B3", tiktok.packageName)),
         )
 
-        val result = restoreBlockOver(repository)(deleted) as RestoreBlockResult.PartiallyRestored
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted)) as RestoreBlockResult.PartiallyRestored
 
         assertEquals(
             listOf(
@@ -145,7 +148,7 @@ class RestoreBlockUseCaseTest {
         val owners = listOf(block("B2", instagram.packageName), block("B3", x.packageName, enabled = false))
         val repository = FakeBlockRepository(owners)
 
-        val result = restoreBlockOver(repository)(deleted)
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted))
 
         assertEquals(
             RestoreBlockResult.NotRestored(
@@ -166,11 +169,12 @@ class RestoreBlockUseCaseTest {
         val repository = FakeBlockRepository(listOf(block("B2", tiktok.packageName)))
         val restoreBlock = restoreBlockOver(repository)
 
-        val first = restoreBlock(deleted)
-        val second = restoreBlock(deleted)
+        val first = restoreBlock(deletedAt(Int.MAX_VALUE, deleted))
+        val second = restoreBlock(deletedAt(Int.MAX_VALUE, deleted))
 
-        assertEquals(first, second)
+        assertTrue(first is RestoreBlockResult.Restored)
         assertTrue(second is RestoreBlockResult.Restored)
+        assertEquals(1, repository.writes.size)
         assertEquals(listOf("B2", "B1"), repository.getBlocks().map { it.id })
         assertEquals(deleted, repository.getBlocks().single { it.id == "B1" })
     }
@@ -181,12 +185,96 @@ class RestoreBlockUseCaseTest {
         val repository = FakeBlockRepository(listOf(block("B2", instagram.packageName)))
         val restoreBlock = restoreBlockOver(repository)
 
-        val first = restoreBlock(deleted)
-        val second = restoreBlock(deleted)
+        restoreBlock(deletedAt(Int.MAX_VALUE, deleted))
+        restoreBlock(deletedAt(Int.MAX_VALUE, deleted))
 
-        assertEquals(first, second)
+        assertEquals(1, repository.writes.size)
         assertEquals(1, repository.getBlocks().count { it.id == "B1" })
         assertEquals(setOf(x.packageName), repository.getBlocks().single { it.id == "B1" }.packageNames)
+    }
+
+    @Test
+    fun `deleting then restoring the first, middle or last block recovers the exact original list`() = runTest {
+        val original = listOf(
+            block("B1", instagram.packageName),
+            block("B2", x.packageName),
+            block("B3", tiktok.packageName),
+        )
+        for (id in listOf("B1", "B2", "B3")) {
+            val repository = FakeBlockRepository(original)
+
+            val deleted = DeleteBlockUseCase(repository)(id)!!
+            restoreBlockOver(repository)(deleted)
+
+            assertEquals("restoring $id", original, repository.getBlocks())
+        }
+    }
+
+    @Test
+    fun `restoring in reverse deletion order recovers the original list`() = runTest {
+        val original = listOf(
+            block("B1", instagram.packageName),
+            block("B2", x.packageName),
+            block("B3", tiktok.packageName),
+        )
+        val repository = FakeBlockRepository(original)
+        val deleteBlock = DeleteBlockUseCase(repository)
+        val restoreBlock = restoreBlockOver(repository)
+
+        val first = deleteBlock("B1")!!
+        val second = deleteBlock("B2")!!
+        restoreBlock(second)
+        restoreBlock(first)
+
+        assertEquals(original, repository.getBlocks())
+    }
+
+    @Test
+    fun `restoring in the same order as the deletions clamps positions and keeps every block once`() = runTest {
+        val original = listOf(
+            block("B1", instagram.packageName),
+            block("B2", x.packageName),
+            block("B3", tiktok.packageName),
+        )
+        val repository = FakeBlockRepository(original)
+        val deleteBlock = DeleteBlockUseCase(repository)
+        val restoreBlock = restoreBlockOver(repository)
+
+        val first = deleteBlock("B1")!!
+        val second = deleteBlock("B2")!!
+        restoreBlock(first)
+        restoreBlock(second)
+
+        assertEquals(listOf("B2", "B1", "B3"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `an index past the end of the list restores at the end`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B2", tiktok.packageName)))
+
+        restoreBlockOver(repository)(deletedAt(5, block("B1", x.packageName)))
+
+        assertEquals(listOf("B2", "B1"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `restoring an id that already exists writes nothing and keeps later edits`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B2", tiktok.packageName)))
+        val deleted = deletedAt(0, block("B1", instagram.packageName, x.packageName))
+        val restoreBlock = restoreBlockOver(repository)
+
+        restoreBlock(deleted)
+        SetBlockEnabledUseCase(repository)("B1", enabled = false)
+        val writesBefore = repository.writes.size
+        val again = restoreBlock(deleted)
+
+        assertTrue(again is RestoreBlockResult.Restored)
+        assertEquals(
+            BlockChangeSummary(emptySet(), emptySet(), emptySet(), emptyMap(), emptyMap()),
+            (again as RestoreBlockResult.Restored).summary,
+        )
+        assertEquals(writesBefore, repository.writes.size)
+        assertEquals(false, repository.getBlocks().single { it.id == "B1" }.enabled)
     }
 
     @Test
@@ -195,7 +283,7 @@ class RestoreBlockUseCaseTest {
         val deleted = block("B1", gone, x.packageName)
         val repository = FakeBlockRepository(listOf(block("B2", gone)))
 
-        val result = restoreBlockOver(repository)(deleted) as RestoreBlockResult.PartiallyRestored
+        val result = restoreBlockOver(repository)(deletedAt(Int.MAX_VALUE, deleted)) as RestoreBlockResult.PartiallyRestored
 
         assertEquals(listOf(SkippedApp(gone, gone, BlockReference("B2", "Block B2"))), result.skippedApps)
     }
@@ -204,7 +292,7 @@ class RestoreBlockUseCaseTest {
     fun `labels are read once from the catalog before the transaction`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B2", instagram.packageName)))
 
-        restoreBlockOver(repository)(block("B1", instagram.packageName, x.packageName))
+        restoreBlockOver(repository)(deletedAt(0, block("B1", instagram.packageName, x.packageName)))
 
         assertEquals(1, catalog.requestCount)
     }
@@ -215,7 +303,7 @@ class RestoreBlockUseCaseTest {
         repository.writeFailure = IOException("disk full")
 
         assertThrows(IOException::class.java) {
-            runBlocking { restoreBlockOver(repository)(block("B1", instagram.packageName)) }
+            runBlocking { restoreBlockOver(repository)(deletedAt(0, block("B1", instagram.packageName))) }
         }
 
         assertEquals(listOf(block("B2", tiktok.packageName)), repository.getBlocks())
@@ -230,7 +318,7 @@ class RestoreBlockUseCaseTest {
         val restoreBlock = restoreBlockOver(repository)
         val draft = BlockDraft(null, "Redes", linkedSetOf(instagram.packageName), richRule)
 
-        val results = listOf(async { saveBlock(draft) }, async { restoreBlock(deleted) }).awaitAll()
+        val results = listOf(async { saveBlock(draft) }, async { restoreBlock(deletedAt(Int.MAX_VALUE, deleted)) }).awaitAll()
 
         assertTrue(results[0] is SaveBlockResult.Saved)
         assertTrue(results[1] is RestoreBlockResult.PartiallyRestored)

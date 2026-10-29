@@ -1,8 +1,8 @@
 package com.leo.blockapp.domain.ports.input
 
-import com.leo.blockapp.domain.model.Block
+import com.leo.blockapp.domain.model.DeletedBlock
 
-/** Input port: delete a block and return it so it can be restored. Null when the id is unknown. */
+/** Input port: delete a block and return it with its list position so it can be restored. Null when the id is unknown. */
 interface DeleteBlock {
-    suspend operator fun invoke(id: String): Block?
+    suspend operator fun invoke(id: String): DeletedBlock?
 }

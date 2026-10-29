@@ -28,11 +28,16 @@ data class BlockUpdate<T>(
  * Changes applied atomically by [BlockRepository.update]. Contract every implementation must honor:
  * - [upserts] must not contain duplicate ids (implementations reject them with an IllegalArgumentException).
  * - An upsert replaces the stored block with the same id in place, keeping its position.
- * - An upsert of an id that is not stored appends the block at the end, in the order given.
+ * - An upsert of an id that is not stored and has no [insertAt] entry appends the block at the end, in the order given.
+ * - An upsert of an id that is not stored and has an [insertAt] entry inserts it at that index of the list as it
+ *   is after deletions and replacements (and after the new ids processed before it, in [upserts] order); the
+ *   index is clamped to 0..size, so an out-of-range index never fails.
+ * - [insertAt] entries for ids that are already stored, deleted or not upserted are ignored.
  * - Deletion wins: an id present in both [upserts] and [deletedIds] ends up deleted, never stored.
  * - Ids in [deletedIds] that are not stored are ignored.
  */
 data class BlockChanges(
     val upserts: List<Block> = emptyList(),
     val deletedIds: Set<String> = emptySet(),
+    val insertAt: Map<String, Int> = emptyMap(),
 )

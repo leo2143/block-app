@@ -59,7 +59,7 @@ class SetBlockEnabledUseCaseTest {
     }
 
     @Test
-    fun `rapid toggles of one block end on the last requested value`() = runTest {
+    fun `rapid toggles of one block run one at a time and end on the last requested value`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a")), beforeApply = { yield() })
         val setBlockEnabled = SetBlockEnabledUseCase(repository)
 
@@ -68,6 +68,19 @@ class SetBlockEnabledUseCaseTest {
 
         assertEquals(false, repository.getBlocks().single().enabled)
         assertEquals(9, repository.writes.size)
+        assertEquals(1, repository.maxConcurrentUpdates)
+    }
+
+    @Test
+    fun `setting the value a block already has writes nothing`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b", enabled = false)))
+        val setBlockEnabled = SetBlockEnabledUseCase(repository)
+
+        setBlockEnabled("B1", enabled = true)
+        setBlockEnabled("B2", enabled = false)
+
+        assertEquals(0, repository.writes.size)
+        assertEquals(listOf(block("B1", "a"), block("B2", "b", enabled = false)), repository.getBlocks())
     }
 
     @Test
