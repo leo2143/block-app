@@ -230,6 +230,41 @@ class RootSnackbarViewModelTest {
     }
 
     @Test
+    fun `deleting a block again while its restore is in flight keeps only the new deletion`() = runTest {
+        val gate = CompletableDeferred<RestoreBlockResult>()
+        val vm = deletingViewModel(FakeRestore { gate.await() })
+        vm.deleteBlock("B1")
+        advanceUntilIdle()
+        val deleted = vm.pendingDeletions.value.single().deleted
+        vm.onUndo(deleted)
+
+        vm.deleteBlock("B1")
+        advanceUntilIdle()
+        assertEquals(listOf("B1" to PendingStatus.AWAITING_DECISION), vm.statuses())
+
+        gate.complete(RestoreBlockResult.Restored(deleted.block, emptySummary))
+        advanceUntilIdle()
+
+        assertEquals(listOf("B1" to PendingStatus.AWAITING_DECISION), vm.statuses())
+    }
+
+    @Test
+    fun `a failed restore does not mark a newer deletion of the same block as failed`() = runTest {
+        val gate = CompletableDeferred<RestoreBlockResult>()
+        val vm = deletingViewModel(FakeRestore { gate.await() })
+        vm.deleteBlock("B1")
+        advanceUntilIdle()
+        vm.onUndo(vm.pendingDeletions.value.single().deleted)
+        vm.deleteBlock("B1")
+        advanceUntilIdle()
+
+        gate.completeExceptionally(IOException("disk"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("B1" to PendingStatus.AWAITING_DECISION), vm.statuses())
+    }
+
+    @Test
     fun `dismissing removes only that entry`() = runTest {
         val vm = deletingViewModel()
         vm.deleteBlock("B1")

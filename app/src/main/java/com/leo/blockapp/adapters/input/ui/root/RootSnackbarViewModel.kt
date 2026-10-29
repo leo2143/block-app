@@ -45,7 +45,10 @@ class RootSnackbarViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val deleted = deleteBlock.invoke(id) ?: return@launch
-                _pendingDeletions.update { it + PendingDeletion(deleted) }
+                // A newer deletion of the same block supersedes any entry still queued for it.
+                _pendingDeletions.update { entries ->
+                    entries.filterNot { it.id == deleted.block.id } + PendingDeletion(deleted)
+                }
             } catch (_: IOException) {
                 post(WriteFailureMessages.NOT_SAVED)
             }
@@ -64,11 +67,20 @@ class RootSnackbarViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val result = restoreBlock.invoke(deleted)
-                remove(id)
+                // Only the entry this restore was started for: a newer deletion of the same block must survive.
+                _pendingDeletions.update { entries ->
+                    entries.filterNot { it.id == id && it.status == PendingStatus.RESTORING }
+                }
                 RestoreMessages.message(result)?.let(::post)
             } catch (_: IOException) {
                 _pendingDeletions.update { entries ->
-                    entries.map { if (it.id == id) it.copy(status = PendingStatus.RESTORE_FAILED) else it }
+                    entries.map {
+                        if (it.id == id && it.status == PendingStatus.RESTORING) {
+                            it.copy(status = PendingStatus.RESTORE_FAILED)
+                        } else {
+                            it
+                        }
+                    }
                 }
             }
         }
