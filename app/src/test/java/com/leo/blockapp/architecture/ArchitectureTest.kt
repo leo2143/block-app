@@ -14,11 +14,17 @@ class ArchitectureTest {
 
     private val forbiddenDomainPackages = listOf("android", "androidx", "dagger", "javax.inject")
 
-    private val forbiddenInputAdapterPackages = listOf(
-        "com.leo.blockapp.adapters.output",
-        "com.leo.blockapp.domain.ports.output",
-        "com.leo.blockapp.domain.usecases",
-        "com.leo.blockapp.domain.blocks",
+    private val allowedInputAdapterPackages = listOf(
+        "com.leo.blockapp.domain.model",
+        "com.leo.blockapp.domain.ports.input",
+        "com.leo.blockapp.adapters.input",
+    )
+
+    /** Any `com.leo.blockapp.` reference (import or fully qualified) that is not in the allowlist. */
+    private val inputAdapterRules = listOf(
+        Regex(
+            """(^|[^\w.])com\.leo\.blockapp\.(?!(${allowedInputAdapterPackages.joinToString("|") { Regex.escape(it.removePrefix("com.leo.blockapp.")) }})\b)""",
+        ),
     )
 
     @Test
@@ -41,7 +47,7 @@ class ArchitectureTest {
 
     @Test
     fun `input adapters only depend on input ports and models`() {
-        val violations = findViolations(inputAdaptersDirectory, forbiddenInputAdapterPackages.map(::importOf))
+        val violations = findViolations(inputAdaptersDirectory, inputAdapterRules)
 
         assertTrue(
             "The UI must only use domain.model and domain.ports.input:\n" + violations.joinToString("\n"),
@@ -83,20 +89,72 @@ class ArchitectureTest {
     }
 
     @Test
-    fun `scanner reports a forbidden output port import in a ui file`() {
-        val scratchDirectory = createTempDirectory(prefix = "architecture-scan").toFile()
-        try {
-            File(scratchDirectory, "LeakyScreen.kt").writeText(
-                "package leaky\n\nimport com.leo.blockapp.domain.ports.output.BlockRepository\n" +
-                    "import com.leo.blockapp.domain.ports.input.SaveBlock\n",
-            )
+    fun `ui scanner reports a forbidden output port import in a ui file`() {
+        val violations = scanUi(
+            "package leaky\n\nimport com.leo.blockapp.domain.ports.output.BlockRepository\n" +
+                "import com.leo.blockapp.domain.ports.input.SaveBlock\n",
+        )
 
-            val violations = findViolations(scratchDirectory, forbiddenInputAdapterPackages.map(::importOf))
+        assertEquals(
+            listOf("LeakyScreen.kt: import com.leo.blockapp.domain.ports.output.BlockRepository"),
+            violations,
+        )
+    }
+
+    @Test
+    fun `ui scanner rejects imports outside the allowed packages`() {
+        forbiddenUiReferences.forEach { reference ->
+            val line = "import $reference"
 
             assertEquals(
-                listOf("LeakyScreen.kt: import com.leo.blockapp.domain.ports.output.BlockRepository"),
-                violations,
+                "Expected a violation for: $line",
+                listOf("LeakyScreen.kt: $line"),
+                scanUi("package leaky\n\n$line\n"),
             )
+        }
+    }
+
+    @Test
+    fun `ui scanner rejects fully qualified uses outside the allowed packages`() {
+        forbiddenUiReferences.forEach { reference ->
+            val line = "val leak = $reference()"
+
+            assertEquals(
+                "Expected a violation for: $line",
+                listOf("LeakyScreen.kt: $line"),
+                scanUi("package leaky\n\n$line\n"),
+            )
+        }
+    }
+
+    @Test
+    fun `ui scanner accepts the allowed packages`() {
+        val violations = scanUi(
+            "package com.leo.blockapp.adapters.input.ui.blocks\n\n" +
+                "import com.leo.blockapp.domain.model.BlockViolation\n" +
+                "import com.leo.blockapp.domain.ports.input.SaveBlock\n" +
+                "import com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme\n" +
+                "val own = com.leo.blockapp.domain.model.AppUsage()\n",
+        )
+
+        assertEquals(emptyList<String>(), violations)
+    }
+
+    private val forbiddenUiReferences = listOf(
+        "com.leo.blockapp.domain.usecases.SaveBlock",
+        "com.leo.blockapp.domain.blocks.BlockValidator",
+        "com.leo.blockapp.domain.usage.UsageCalculator",
+        "com.leo.blockapp.domain.ports.output.BlockRepository",
+        "com.leo.blockapp.adapters.output.RoomBlockRepository",
+        "com.leo.blockapp.domain.future.NewThing",
+        "com.leo.blockapp.di.AppModule",
+    )
+
+    private fun scanUi(source: String): List<String> {
+        val scratchDirectory = createTempDirectory(prefix = "architecture-scan").toFile()
+        try {
+            File(scratchDirectory, "LeakyScreen.kt").writeText(source)
+            return findViolations(scratchDirectory, inputAdapterRules)
         } finally {
             scratchDirectory.deleteRecursively()
         }
