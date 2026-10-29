@@ -1,6 +1,7 @@
 package com.leo.blockapp.domain.usecases
 
 import com.leo.blockapp.domain.blocks.BlockValidator
+import com.leo.blockapp.domain.blocks.ownerBlockByPackageName
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockChangeSummary
 import com.leo.blockapp.domain.model.BlockDraft
@@ -42,10 +43,9 @@ class SaveBlockUseCase(
 
         val otherBlocks = currentBlocks.filter { it.id != draft.id }
         val sourcesById = otherBlocks.associateBy { it.id }
+        val ownerByPackageName = ownerBlockByPackageName(currentBlocks, excludedBlockId = draft.id)
         val packagesMovingBySourceId = draft.packageNames
-            .mapNotNull { packageName ->
-                otherBlocks.firstOrNull { packageName in it.packageNames }?.let { it.id to packageName }
-            }
+            .mapNotNull { packageName -> ownerByPackageName[packageName]?.let { it.id to packageName } }
             .groupBy({ it.first }, { it.second })
             .mapValues { (_, packageNames) -> packageNames.toSet() }
 

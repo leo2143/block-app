@@ -12,7 +12,8 @@ import java.io.IOException
 
 /**
  * In-memory repository. [update] is serialized with a [Mutex] so it behaves like a DataStore edit,
- * and every non-empty write is recorded in [writes]. Enforces the [BlockChanges] contract.
+ * and every non-empty write is recorded in [writes]. Enforces the [BlockChanges] contract, including
+ * insertion positions ([BlockChanges.insertAt]), and tracks [maxConcurrentUpdates].
  *
  * [beforeApply] runs after the transform and before the changes are applied, i.e. inside the
  * read-then-write window. Tests use it to suspend (e.g. `yield()`) so concurrent updates really
@@ -31,6 +32,12 @@ class FakeBlockRepository(
 
     val writes: List<BlockChanges> get() = recordedWrites.toList()
 
+    private var activeUpdates = 0
+
+    /** Highest number of [update] calls running at once (transform through apply). Serialized updates keep it at 1. */
+    var maxConcurrentUpdates = 0
+        private set
+
     /** When set, every update that would write throws it instead (like a failing DataStore edit). */
     @Volatile
     var writeFailure: IOException? = null
@@ -41,18 +48,24 @@ class FakeBlockRepository(
 
     override suspend fun <T> update(transform: (current: List<Block>) -> BlockUpdate<T>): T =
         updateMutex.withLock {
-            val snapshot = blocksState.value
-            val blockUpdate = transform(snapshot)
-            val changes = blockUpdate.changes
-            val upsertIds = changes.upserts.map { it.id }
-            require(upsertIds.size == upsertIds.toSet().size) { "Duplicate ids in upserts: $upsertIds" }
-            beforeApply()
-            if (changes.upserts.isNotEmpty() || changes.deletedIds.isNotEmpty()) {
-                writeFailure?.let { throw it }
-                blocksState.value = apply(snapshot, changes)
-                recordedWrites += changes
+            activeUpdates += 1
+            maxConcurrentUpdates = maxOf(maxConcurrentUpdates, activeUpdates)
+            try {
+                val snapshot = blocksState.value
+                val blockUpdate = transform(snapshot)
+                val changes = blockUpdate.changes
+                val upsertIds = changes.upserts.map { it.id }
+                require(upsertIds.size == upsertIds.toSet().size) { "Duplicate ids in upserts: $upsertIds" }
+                beforeApply()
+                if (changes.upserts.isNotEmpty() || changes.deletedIds.isNotEmpty()) {
+                    writeFailure?.let { throw it }
+                    blocksState.value = apply(snapshot, changes)
+                    recordedWrites += changes
+                }
+                blockUpdate.result
+            } finally {
+                activeUpdates -= 1
             }
-            blockUpdate.result
         }
 
     private fun apply(current: List<Block>, changes: BlockChanges): List<Block> {
@@ -61,7 +74,12 @@ class FakeBlockRepository(
             .filterNot { it.id in changes.deletedIds }
             .map { upsertsById[it.id] ?: it }
         val currentIds = current.map { it.id }.toSet()
-        val appended = changes.upserts.filter { it.id !in currentIds && it.id !in changes.deletedIds }
-        return kept + appended
+        val added = changes.upserts.filter { it.id !in currentIds && it.id !in changes.deletedIds }
+        val result = kept.toMutableList()
+        added.forEach { block ->
+            val index = changes.insertAt[block.id]
+            if (index == null) result += block else result.add(index.coerceIn(0, result.size), block)
+        }
+        return result
     }
 }

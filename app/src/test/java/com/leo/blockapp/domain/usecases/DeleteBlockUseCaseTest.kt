@@ -3,6 +3,7 @@ package com.leo.blockapp.domain.usecases
 import com.leo.blockapp.domain.fakes.FakeBlockRepository
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockRule
+import com.leo.blockapp.domain.model.DeletedBlock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
@@ -34,18 +35,27 @@ class DeleteBlockUseCaseTest {
 
         val removed = DeleteBlockUseCase(repository)("B1")
 
-        assertEquals(block("B1", "c", "a"), removed)
-        assertEquals(listOf("c", "a"), removed!!.packageNames.toList())
+        assertEquals(DeletedBlock(block("B1", "c", "a"), index = 0), removed)
+        assertEquals(listOf("c", "a"), removed!!.block.packageNames.toList())
         assertEquals(listOf(block("B2", "b")), repository.getBlocks())
         assertEquals(1, repository.writes.size)
         assertEquals(setOf("B1"), repository.writes.single().deletedIds)
     }
 
     @Test
+    fun `reports the position the block had in the list at delete time`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
+
+        assertEquals(1, DeleteBlockUseCase(repository)("B2")!!.index)
+        assertEquals(1, DeleteBlockUseCase(repository)("B3")!!.index)
+        assertEquals(0, DeleteBlockUseCase(repository)("B1")!!.index)
+    }
+
+    @Test
     fun `deleting a paused block returns it with enabled false`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a", enabled = false)))
 
-        assertEquals(block("B1", "a", enabled = false), DeleteBlockUseCase(repository)("B1"))
+        assertEquals(DeletedBlock(block("B1", "a", enabled = false), index = 0), DeleteBlockUseCase(repository)("B1"))
         assertEquals(emptyList<Block>(), repository.getBlocks())
     }
 
@@ -75,7 +85,7 @@ class DeleteBlockUseCaseTest {
 
         val results = listOf(async { deleteBlock("B1") }, async { deleteBlock("B1") }).awaitAll()
 
-        assertEquals(listOf(block("B1", "a")), results.filterNotNull())
+        assertEquals(listOf(DeletedBlock(block("B1", "a"), index = 0)), results.filterNotNull())
         assertEquals(1, results.count { it == null })
         assertEquals(1, repository.writes.size)
     }

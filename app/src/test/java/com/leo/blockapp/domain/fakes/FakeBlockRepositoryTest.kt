@@ -83,6 +83,62 @@ class FakeBlockRepositoryTest {
     }
 
     @Test
+    fun `insertAt places a new id at that index of the list after deletions`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
+
+        repository.update {
+            BlockUpdate(
+                BlockChanges(upserts = listOf(block("B4", "d")), deletedIds = setOf("B1"), insertAt = mapOf("B4" to 1)),
+                Unit,
+            )
+        }
+
+        assertEquals(listOf("B2", "B4", "B3"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `insertAt is clamped to the list bounds`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
+
+        repository.update {
+            BlockUpdate(
+                BlockChanges(
+                    upserts = listOf(block("B3", "c"), block("B4", "d")),
+                    insertAt = mapOf("B3" to 99, "B4" to -5),
+                ),
+                Unit,
+            )
+        }
+
+        assertEquals(listOf("B4", "B1", "B2", "B3"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `insertAt is ignored for ids that are already stored and for ids without an entry`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
+
+        repository.update {
+            BlockUpdate(
+                BlockChanges(upserts = listOf(block("B2", "z"), block("B3", "c")), insertAt = mapOf("B2" to 0)),
+                Unit,
+            )
+        }
+
+        assertEquals(listOf("B1", "B2", "B3"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `update calls never overlap`() = runTest {
+        val repository = FakeBlockRepository(emptyList(), beforeApply = { yield() })
+
+        List(10) { index ->
+            async { repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B$index", "p$index"))), Unit) } }
+        }.awaitAll()
+
+        assertEquals(1, repository.maxConcurrentUpdates)
+    }
+
+    @Test
     fun `upsert of an existing id keeps its position`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
 

@@ -1,8 +1,10 @@
 package com.leo.blockapp.domain.usecases
 
+import com.leo.blockapp.domain.blocks.ownerBlockByPackageName
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockChangeSummary
 import com.leo.blockapp.domain.model.BlockReference
+import com.leo.blockapp.domain.model.DeletedBlock
 import com.leo.blockapp.domain.model.RestoreBlockResult
 import com.leo.blockapp.domain.model.SkippedApp
 import com.leo.blockapp.domain.ports.input.RestoreBlock
@@ -12,30 +14,33 @@ import com.leo.blockapp.domain.ports.output.BlockUpdate
 import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 
 /**
- * Brings back a deleted block with only the apps no other block holds (paused blocks hold theirs too).
- * Blocks with the same id are not treated as owners, so restoring twice is idempotent. App labels are
- * fetched before the transaction because the transform must not suspend. No re-validation: the block was
- * valid when it was deleted.
+ * Brings back a deleted block at its original position with only the apps no other block holds (paused
+ * blocks hold theirs too). The position is `min(index, current size)` inside the same transaction, so undoing
+ * deletions in reverse order recovers the original list, and undoing in the same order never fails (positions
+ * are clamped). If a block with the same id already exists, nothing is written and the existing block is never
+ * overwritten, so a stale or repeated restore is idempotent and keeps later edits. App labels are fetched
+ * before the transaction because the transform must not suspend. No re-validation: the block was valid when
+ * it was deleted.
  */
 class RestoreBlockUseCase(
     private val blockRepository: BlockRepository,
     private val installedAppCatalog: InstalledAppCatalog,
 ) : RestoreBlock {
 
-    override suspend fun invoke(block: Block): RestoreBlockResult {
+    override suspend fun invoke(deletedBlock: DeletedBlock): RestoreBlockResult {
         val labelsByPackageName = installedAppCatalog.getLaunchableApps().associate { it.packageName to it.label }
-        return blockRepository.update { currentBlocks -> decide(block, currentBlocks, labelsByPackageName) }
+        return blockRepository.update { currentBlocks -> planRestore(deletedBlock, currentBlocks, labelsByPackageName) }
     }
 
-    private fun decide(
-        block: Block,
+    private fun planRestore(
+        deletedBlock: DeletedBlock,
         currentBlocks: List<Block>,
         labelsByPackageName: Map<String, String>,
     ): BlockUpdate<RestoreBlockResult> {
-        val ownerByPackageName = LinkedHashMap<String, Block>()
-        currentBlocks.filter { it.id != block.id }.forEach { owner ->
-            owner.packageNames.forEach { packageName -> ownerByPackageName.putIfAbsent(packageName, owner) }
-        }
+        val block = deletedBlock.block
+        currentBlocks.firstOrNull { it.id == block.id }?.let { return BlockUpdate(BlockChanges(), alreadyPresent(it)) }
+
+        val ownerByPackageName = ownerBlockByPackageName(currentBlocks, excludedBlockId = block.id)
 
         val skippedApps = block.packageNames.mapNotNull { packageName ->
             ownerByPackageName[packageName]?.let { owner ->
@@ -64,6 +69,18 @@ class RestoreBlockUseCase(
         } else {
             RestoreBlockResult.PartiallyRestored(restored, skippedApps, summary)
         }
-        return BlockUpdate(BlockChanges(upserts = listOf(restored)), result)
+        val position = minOf(deletedBlock.index, currentBlocks.size)
+        return BlockUpdate(BlockChanges(upserts = listOf(restored), insertAt = mapOf(restored.id to position)), result)
     }
+
+    private fun alreadyPresent(storedBlock: Block) = RestoreBlockResult.Restored(
+        storedBlock,
+        BlockChangeSummary(
+            affectedBlockIds = emptySet(),
+            emptiedBlockIds = emptySet(),
+            movedPackages = emptySet(),
+            addedPackages = emptyMap(),
+            removedPackages = emptyMap(),
+        ),
+    )
 }
