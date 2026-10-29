@@ -25,8 +25,8 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class RootSnackbarViewModel @Inject constructor(
-    private val deleteBlock: DeleteBlock,
-    private val restoreBlock: RestoreBlock,
+    private val deleteBlockPort: DeleteBlock,
+    private val restoreBlockPort: RestoreBlock,
 ) : ViewModel() {
 
     private val _pendingDeletions = MutableStateFlow<List<PendingDeletion>>(emptyList())
@@ -44,7 +44,7 @@ class RootSnackbarViewModel @Inject constructor(
     fun deleteBlock(id: String) {
         viewModelScope.launch {
             try {
-                val deleted = deleteBlock.invoke(id) ?: return@launch
+                val deleted = deleteBlockPort.invoke(id) ?: return@launch
                 // A newer deletion of the same block supersedes any entry still queued for it.
                 _pendingDeletions.update { entries ->
                     entries.filterNot { it.id == deleted.block.id } + PendingDeletion(deleted)
@@ -66,7 +66,7 @@ class RootSnackbarViewModel @Inject constructor(
         if (!started) return
         viewModelScope.launch {
             try {
-                val result = restoreBlock.invoke(deleted)
+                val result = restoreBlockPort.invoke(deleted)
                 // Only the entry this restore was started for: a newer deletion of the same block must survive.
                 _pendingDeletions.update { entries ->
                     entries.filterNot { it.id == id && it.status == PendingStatus.RESTORING }

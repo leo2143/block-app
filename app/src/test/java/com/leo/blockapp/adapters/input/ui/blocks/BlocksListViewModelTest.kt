@@ -96,7 +96,7 @@ class BlocksListViewModelTest {
     }
 
     @Test
-    fun `a block with an uninstalled package loads without crashing`() = runTest {
+    fun `a block whose app is not installed still counts it`() = runTest {
         val observe = FakeObserve()
         val vm = BlocksListViewModel(observe, FakeSetEnabled())
         keepStateHot(vm)

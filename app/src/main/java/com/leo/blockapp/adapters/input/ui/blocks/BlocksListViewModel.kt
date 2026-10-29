@@ -2,6 +2,7 @@ package com.leo.blockapp.adapters.input.ui.blocks
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.ports.input.ObserveBlocks
 import com.leo.blockapp.domain.ports.input.SetBlockEnabled
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,10 +46,10 @@ class BlocksListViewModel @Inject constructor(
 
     // StateFlow equality already drops repeated identical emissions (e.g. empty lists after read failures).
     val uiState: StateFlow<BlocksListUiState> = observeBlocks()
-        .map { blocks ->
+        .map<List<Block>, BlocksListUiState> { blocks ->
             BlocksListUiState.Loaded(
                 blocks.map { BlockListItem(it.id, it.name, it.packageNames.size, it.enabled) },
-            ) as BlocksListUiState
+            )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), BlocksListUiState.Loading)
 
