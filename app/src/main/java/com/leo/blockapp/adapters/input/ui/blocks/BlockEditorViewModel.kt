@@ -109,6 +109,7 @@ class BlockEditorViewModel @Inject constructor(
 
     fun cancelMove() {
         val current = ready() ?: return
+        if (current.isSaving) return
         _uiState.value = current.copy(pendingMoves = null)
     }
 
@@ -157,7 +158,7 @@ class BlockEditorViewModel @Inject constructor(
     fun onBackRequested(): Boolean {
         val current = ready() ?: return true
         if (current.isSaving) return false
-        if (current.saved ||snapshotOf(current) == initialSnapshot) return true
+        if (current.saved || snapshotOf(current) == initialSnapshot) return true
         _uiState.value = current.copy(showDiscardDialog = true)
         return false
     }
@@ -276,6 +277,8 @@ class BlockEditorViewModel @Inject constructor(
         if (current.isSaving) return
         if (clearsDomainViolations) domainViolations = emptySet()
         var next = transform(current)
+        // Conflicts were computed for the old selection; a changed selection makes them stale.
+        if (next.selectedPackages != current.selectedPackages) next = next.copy(pendingMoves = null)
         if (touch != null) next = next.copy(touchedFields = next.touchedFields + touch)
         next = recomputed(next)
         _uiState.value = next

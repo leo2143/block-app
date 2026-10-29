@@ -590,6 +590,34 @@ class BlockEditorViewModelTest {
     }
 
     @Test
+    fun `cancelling the move dialog while the confirmation is saving is ignored`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var call = 0
+        val vm = newViewModel(onSave = { _, _ ->
+            if (++call == 1) {
+                conflictResult()
+            } else {
+                gate.await()
+                savedResult()
+            }
+        })
+        vm.toggleApp("com.instagram")
+        vm.save()
+        advanceUntilIdle()
+        vm.confirmMove()
+        assertTrue(vm.ready().isSaving)
+
+        vm.cancelMove()
+
+        assertEquals(conflictResult().conflicts, vm.ready().pendingMoves)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertNull(vm.ready().pendingMoves)
+        assertTrue(vm.ready().saved)
+        assertEquals(2, saveBlock.calls.size)
+    }
+
+    @Test
     fun `Save after a successful save is ignored`() = runTest {
         var call = 0
         val vm = newViewModel(onSave = { _, _ -> if (++call == 1) savedResult() else conflictResult() })
@@ -795,6 +823,43 @@ class BlockEditorViewModelTest {
 
         assertEquals(1, events.size)
         assertFalse(vm.ready().isSaving)
+        assertEquals(conflictResult().conflicts, vm.ready().pendingMoves)
+    }
+
+    @Test
+    fun `changing the selection after a failed move confirmation drops the stale conflicts`() = runTest {
+        var call = 0
+        val vm = newViewModel(onSave = { _, _ ->
+            if (++call == 1) conflictResult() else throw IOException("disk")
+        })
+        collectEvents(vm)
+        vm.toggleApp("com.instagram")
+        vm.save()
+        advanceUntilIdle()
+        vm.confirmMove()
+        advanceUntilIdle()
+        assertEquals(conflictResult().conflicts, vm.ready().pendingMoves)
+
+        vm.toggleApp("com.x")
+
+        assertNull(vm.ready().pendingMoves)
+    }
+
+    @Test
+    fun `editing the name after a failed move confirmation keeps the conflicts`() = runTest {
+        var call = 0
+        val vm = newViewModel(onSave = { _, _ ->
+            if (++call == 1) conflictResult() else throw IOException("disk")
+        })
+        collectEvents(vm)
+        vm.toggleApp("com.instagram")
+        vm.save()
+        advanceUntilIdle()
+        vm.confirmMove()
+        advanceUntilIdle()
+
+        vm.setNameText("Renamed")
+
         assertEquals(conflictResult().conflicts, vm.ready().pendingMoves)
     }
 
