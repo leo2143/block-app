@@ -4,8 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.leo.blockapp.adaptadores.entrada.ui.apps.PantallaApps
-import com.leo.blockapp.adaptadores.entrada.ui.tema.TemaBlockApp
+import com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme
+import com.leo.blockapp.adapters.input.ui.usage.AppUsageScreen
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -14,8 +14,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            TemaBlockApp {
-                PantallaApps()
+            BlockAppTheme {
+                AppUsageScreen()
             }
         }
     }

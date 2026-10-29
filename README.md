@@ -36,23 +36,24 @@ Hexagonal (puertos y adaptadores), en un solo módulo, con Hilt para la inyecci�
 
 ```text
 app/src/main/java/com/leo/blockapp/
-├── dominio/                  el hexágono: Kotlin puro, sin Android
-│   ├── modelo/               EventoUso, AppInstalada, UsoDeApp
-│   ├── uso/                  CalculadoraUso (eventos → minutos por app)
-│   ├── puertos/
-│   │   ├── entrada/          ObtenerUsoDeHoy
-│   │   └── salida/           FuenteEventosUso, CatalogoApps, PermisosSistema, Reloj
-│   └── casos/                ObtenerUsoDeHoyCaso
-├── adaptadores/
-│   ├── entrada/ui/           Compose + ViewModel
-│   └── salida/               UsageStatsManager, PackageManager, AppOps, reloj del sistema
+├── domain/                   el hexágono: Kotlin puro, sin Android
+│   ├── model/                UsageEvent, InstalledApp, AppUsage
+│   ├── usage/                ForegroundTimeCalculator (eventos → tiempo por app)
+│   ├── ports/
+│   │   ├── input/            GetTodayUsage
+│   │   └── output/           UsageEventSource, InstalledAppCatalog, SystemPermissions, Clock
+│   └── usecases/             GetTodayUsageUseCase
+├── adapters/
+│   ├── input/ui/             Compose + ViewModel
+│   └── output/               UsageStatsManager, PackageManager, AppOps, reloj del sistema
 └── di/                       módulos de Hilt que conectan puertos con adaptadores
 ```
 
 Reglas:
 
-1. Nada en `dominio/` importa Android, AndroidX ni Hilt (lo verifica `ArquitecturaTest`).
+1. Nada en `domain/` importa Android, AndroidX ni Hilt (lo verifica `ArchitectureTest`).
 2. Los adaptadores conocen los puertos; el dominio nunca conoce a los adaptadores.
 3. Un adaptador de entrada solo usa puertos de entrada.
 4. Solo los módulos de `di/` conectan adaptadores con puertos.
-5. La hora siempre viene del puerto `Reloj`.
+5. La hora siempre viene del puerto `Clock`.
+6. El código va en inglés, con nombres descriptivos.
