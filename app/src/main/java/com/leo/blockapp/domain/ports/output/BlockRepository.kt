@@ -5,8 +5,10 @@ import kotlinx.coroutines.flow.Flow
 
 /** Output port: block configuration storage. The only write path is [update]. */
 interface BlockRepository {
+    /** Emits the full block list on every change. */
     fun observeBlocks(): Flow<List<Block>>
 
+    /** One-off read for display only. Never use it for read-then-write; use [update] instead. */
     suspend fun getBlocks(): List<Block>
 
     /**
