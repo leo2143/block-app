@@ -578,6 +578,7 @@ class BlockEditorViewModelTest {
 
         vm.confirmMove()
         assertTrue(vm.ready().isSaving)
+        assertEquals(conflictResult().conflicts, vm.ready().pendingMoves)
         vm.confirmMove()
         advanceUntilIdle()
         gate.complete(Unit)
@@ -585,6 +586,77 @@ class BlockEditorViewModelTest {
 
         assertEquals(2, saveBlock.calls.size)
         assertFalse(vm.ready().isSaving)
+        assertNull(vm.ready().pendingMoves)
+    }
+
+    @Test
+    fun `Save after a successful save is ignored`() = runTest {
+        var call = 0
+        val vm = newViewModel(onSave = { _, _ -> if (++call == 1) savedResult() else conflictResult() })
+        vm.toggleApp("com.instagram")
+        vm.save()
+        advanceUntilIdle()
+        assertTrue(vm.ready().saved)
+
+        vm.save()
+        advanceUntilIdle()
+
+        assertEquals(1, saveBlock.calls.size)
+        assertNull(vm.ready().pendingMoves)
+        assertFalse(vm.ready().isSaving)
+    }
+
+    @Test
+    fun `edits and touches are ignored while saving`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val vm = newViewModel(onSave = { _, _ ->
+            gate.await()
+            savedResult()
+        })
+        vm.toggleApp("com.instagram")
+        vm.save()
+        val during = vm.ready()
+
+        vm.toggleApp("com.x")
+        vm.setNameText("Changed")
+        vm.touchField(EditorField.LIMIT)
+
+        assertEquals(during, vm.ready())
+        gate.complete(Unit)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `back while saving does not leave and shows no dialog`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val vm = newViewModel(onSave = { _, _ ->
+            gate.await()
+            savedResult()
+        })
+        vm.toggleApp("com.instagram")
+        vm.save()
+
+        assertFalse(vm.onBackRequested())
+        assertFalse(vm.ready().showDiscardDialog)
+        gate.complete(Unit)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a search query change keeps the domain violations`() = runTest {
+        val vm = newViewModel(
+            validateBlock = object : ValidateBlock {
+                override fun invoke(draft: BlockDraft): Set<BlockViolation> = emptySet()
+            },
+            onSave = { _, _ -> SaveBlockResult.Invalid(setOf(BlockViolation.USAGE_LIMIT_OUT_OF_RANGE)) },
+        )
+        vm.toggleApp("com.instagram")
+        vm.save()
+        advanceUntilIdle()
+
+        vm.setSearchQuery("ins")
+
+        assertEquals(setOf(BlockViolation.USAGE_LIMIT_OUT_OF_RANGE), vm.ready().visibleViolations)
     }
 
     private fun conflictResult() = SaveBlockResult.AppsInOtherBlocks(
@@ -708,7 +780,7 @@ class BlockEditorViewModelTest {
     }
 
     @Test
-    fun `a write failure while confirming a move resets isSaving`() = runTest {
+    fun `a write failure while confirming a move resets isSaving and keeps the move dialog`() = runTest {
         var call = 0
         val vm = newViewModel(onSave = { _, _ ->
             if (++call == 1) conflictResult() else throw IOException("disk")
@@ -723,6 +795,7 @@ class BlockEditorViewModelTest {
 
         assertEquals(1, events.size)
         assertFalse(vm.ready().isSaving)
+        assertEquals(conflictResult().conflicts, vm.ready().pendingMoves)
     }
 
     @Test
