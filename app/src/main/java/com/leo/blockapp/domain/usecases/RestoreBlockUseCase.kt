@@ -15,9 +15,10 @@ import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 
 /**
  * Brings back a deleted block at its original place with only the apps no other block holds (paused blocks hold
- * theirs too). Inside the same transaction it is inserted at the index equal to the number of current blocks with
- * a lower [Block.position], so restoring any set of deletions in any order reproduces the original relative
- * order and a block created meanwhile stays after it. If a block with the same id already exists, nothing is
+ * theirs too). Inside the same transaction it is inserted at the index equal to the number of current blocks that
+ * sort before it by ([Block.position], [Block.id]), so restoring any set of deletions in any order reproduces the
+ * original relative order, a block created meanwhile stays after it, and a block that reuses its position (created
+ * after deleting the last block) is ordered by id, whatever the undo order. If a block with the same id already exists, nothing is
  * written and the existing block is never overwritten, so a stale or repeated restore is idempotent and keeps
  * later edits. App labels are fetched before the transaction because the transform must not suspend. No
  * re-validation: the block was valid when it was deleted.
@@ -74,7 +75,7 @@ class RestoreBlockUseCase(
     }
 
     private fun restoreIndex(restored: Block, currentBlocks: List<Block>) =
-        currentBlocks.count { it.position < restored.position }
+        currentBlocks.count { it.position < restored.position || (it.position == restored.position && it.id < restored.id) }
 
     private fun alreadyPresent(storedBlock: Block) = RestoreBlockResult.Restored(
         storedBlock,

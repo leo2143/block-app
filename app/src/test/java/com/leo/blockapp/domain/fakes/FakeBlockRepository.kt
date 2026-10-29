@@ -13,7 +13,8 @@ import java.io.IOException
 /**
  * In-memory repository. [update] is serialized with a [Mutex] so it behaves like a DataStore edit,
  * and every non-empty write is recorded in [writes]. Enforces the [BlockChanges] contract, including
- * insertion positions ([BlockChanges.insertAt]), and tracks [maxConcurrentUpdates].
+ * insertion positions ([BlockChanges.insertAt]), and tracks [maxConcurrentUpdates]. A write whose result is not
+ * ordered by (position, id) is rejected with an IllegalArgumentException, so a caller breaking the order fails loudly.
  *
  * [beforeApply] runs after the transform and before the changes are applied, i.e. inside the
  * read-then-write window. Tests use it to suspend (e.g. `yield()`) so concurrent updates really
@@ -59,7 +60,9 @@ class FakeBlockRepository(
                 beforeApply()
                 if (changes.upserts.isNotEmpty() || changes.deletedIds.isNotEmpty()) {
                     writeFailure?.let { throw it }
-                    blocksState.value = apply(snapshot, changes)
+                    val updated = apply(snapshot, changes)
+                    requireOrderedByPositionAndId(updated)
+                    blocksState.value = updated
                     recordedWrites += changes
                 }
                 blockUpdate.result
@@ -67,6 +70,13 @@ class FakeBlockRepository(
                 activeUpdates -= 1
             }
         }
+
+    private fun requireOrderedByPositionAndId(blocks: List<Block>) {
+        val ordered = blocks.sortedWith(compareBy<Block> { it.position }.thenBy { it.id })
+        require(ordered == blocks) {
+            "Blocks must be ordered by (position, id): ${blocks.map { it.position to it.id }}"
+        }
+    }
 
     private fun apply(current: List<Block>, changes: BlockChanges): List<Block> {
         val upsertsById = changes.upserts.associateBy { it.id }
