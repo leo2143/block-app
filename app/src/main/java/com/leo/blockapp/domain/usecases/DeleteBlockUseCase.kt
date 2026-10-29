@@ -6,7 +6,7 @@ import com.leo.blockapp.domain.ports.output.BlockChanges
 import com.leo.blockapp.domain.ports.output.BlockRepository
 import com.leo.blockapp.domain.ports.output.BlockUpdate
 
-/** Removes a block against the in-transaction snapshot and returns exactly what was removed and where it was. */
+/** Removes a block against the in-transaction snapshot and returns exactly what was removed and which blocks surrounded it. */
 class DeleteBlockUseCase(private val blockRepository: BlockRepository) : DeleteBlock {
 
     override suspend fun invoke(id: String): DeletedBlock? = blockRepository.update { currentBlocks ->
@@ -14,7 +14,12 @@ class DeleteBlockUseCase(private val blockRepository: BlockRepository) : DeleteB
         if (index < 0) {
             BlockUpdate(BlockChanges(), null)
         } else {
-            BlockUpdate(BlockChanges(deletedIds = setOf(id)), DeletedBlock(currentBlocks[index], index))
+            val deleted = DeletedBlock(
+                block = currentBlocks[index],
+                precedingBlockIds = currentBlocks.take(index).map { it.id },
+                followingBlockIds = currentBlocks.drop(index + 1).map { it.id },
+            )
+            BlockUpdate(BlockChanges(deletedIds = setOf(id)), deleted)
         }
     }
 }

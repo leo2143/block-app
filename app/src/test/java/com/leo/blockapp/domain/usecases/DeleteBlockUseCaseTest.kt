@@ -35,7 +35,7 @@ class DeleteBlockUseCaseTest {
 
         val removed = DeleteBlockUseCase(repository)("B1")
 
-        assertEquals(DeletedBlock(block("B1", "c", "a"), index = 0), removed)
+        assertEquals(DeletedBlock(block("B1", "c", "a"), emptyList(), listOf("B2")), removed)
         assertEquals(listOf("c", "a"), removed!!.block.packageNames.toList())
         assertEquals(listOf(block("B2", "b")), repository.getBlocks())
         assertEquals(1, repository.writes.size)
@@ -43,19 +43,40 @@ class DeleteBlockUseCaseTest {
     }
 
     @Test
-    fun `reports the position the block had in the list at delete time`() = runTest {
+    fun `reports the ids before and after the block in list order at delete time`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
 
-        assertEquals(1, DeleteBlockUseCase(repository)("B2")!!.index)
-        assertEquals(1, DeleteBlockUseCase(repository)("B3")!!.index)
-        assertEquals(0, DeleteBlockUseCase(repository)("B1")!!.index)
+        val middle = DeleteBlockUseCase(repository)("B2")!!
+        assertEquals(listOf("B1"), middle.precedingBlockIds)
+        assertEquals(listOf("B3"), middle.followingBlockIds)
+
+        val last = DeleteBlockUseCase(repository)("B3")!!
+        assertEquals(listOf("B1"), last.precedingBlockIds)
+        assertEquals(emptyList<String>(), last.followingBlockIds)
+
+        val first = DeleteBlockUseCase(repository)("B1")!!
+        assertEquals(emptyList<String>(), first.precedingBlockIds)
+        assertEquals(emptyList<String>(), first.followingBlockIds)
+    }
+
+    @Test
+    fun `neighbor ids keep the full list order on both sides`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c"), block("B4", "d")))
+
+        val deleted = DeleteBlockUseCase(repository)("B3")!!
+
+        assertEquals(listOf("B1", "B2"), deleted.precedingBlockIds)
+        assertEquals(listOf("B4"), deleted.followingBlockIds)
     }
 
     @Test
     fun `deleting a paused block returns it with enabled false`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a", enabled = false)))
 
-        assertEquals(DeletedBlock(block("B1", "a", enabled = false), index = 0), DeleteBlockUseCase(repository)("B1"))
+        assertEquals(
+            DeletedBlock(block("B1", "a", enabled = false), emptyList(), emptyList()),
+            DeleteBlockUseCase(repository)("B1"),
+        )
         assertEquals(emptyList<Block>(), repository.getBlocks())
     }
 
@@ -85,7 +106,7 @@ class DeleteBlockUseCaseTest {
 
         val results = listOf(async { deleteBlock("B1") }, async { deleteBlock("B1") }).awaitAll()
 
-        assertEquals(listOf(DeletedBlock(block("B1", "a"), index = 0)), results.filterNotNull())
+        assertEquals(listOf(DeletedBlock(block("B1", "a"), emptyList(), emptyList())), results.filterNotNull())
         assertEquals(1, results.count { it == null })
         assertEquals(1, repository.writes.size)
     }
