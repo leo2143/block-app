@@ -26,15 +26,22 @@ fun BlockAppNavHost(
     navController: NavHostController,
     rootSnackbarViewModel: RootSnackbarViewModel,
     onBlocksListEntered: () -> Unit,
+    snackbarHost: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     NavHost(navController = navController, startDestination = BlockAppRoutes.USAGE, modifier = modifier) {
-        composable(BlockAppRoutes.USAGE) { AppUsageScreen() }
+        composable(BlockAppRoutes.USAGE) { AppUsageScreen(snackbarHost = snackbarHost) }
         composable(BlockAppRoutes.BLOCKS) {
             BlocksListScreen(
                 rootSnackbarViewModel = rootSnackbarViewModel,
-                onAddBlock = { navController.navigate(BlockAppRoutes.editor(null)) },
-                onEditBlock = { blockId -> navController.navigate(BlockAppRoutes.editor(blockId)) },
+                snackbarHost = snackbarHost,
+                // singleTop: a double tap must not stack two editors.
+                onAddBlock = {
+                    navController.navigate(BlockAppRoutes.editor(null)) { launchSingleTop = true }
+                },
+                onEditBlock = { blockId ->
+                    navController.navigate(BlockAppRoutes.editor(blockId)) { launchSingleTop = true }
+                },
                 onEntered = onBlocksListEntered,
             )
         }
@@ -50,6 +57,7 @@ fun BlockAppNavHost(
         ) {
             BlockEditorScreen(
                 rootSnackbarViewModel = rootSnackbarViewModel,
+                snackbarHost = snackbarHost,
                 onClose = {
                     // Guard against a double tap or a late event popping a second destination.
                     if (navController.currentDestination?.route == BlockAppRoutes.EDITOR_PATTERN) {
