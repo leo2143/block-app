@@ -24,6 +24,10 @@ object SuggestedBlockName {
         return truncate(suggestion)
     }
 
-    private fun truncate(text: String): String =
-        if (text.length <= MAX_LENGTH) text else text.take(MAX_LENGTH - ELLIPSIS.length) + ELLIPSIS
+    private fun truncate(text: String): String {
+        if (text.length <= MAX_LENGTH) return text
+        val kept = text.take(MAX_LENGTH - ELLIPSIS.length)
+        val onCodePointBoundary = if (kept.last().isHighSurrogate()) kept.dropLast(1) else kept
+        return onCodePointBoundary.trimEnd() + ELLIPSIS
+    }
 }
