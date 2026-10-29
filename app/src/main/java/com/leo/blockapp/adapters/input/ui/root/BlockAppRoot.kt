@@ -68,28 +68,31 @@ fun BlockAppRoot(rootSnackbarViewModel: RootSnackbarViewModel) {
         }
     }
 
-    Scaffold(
-        snackbarHost = {
-            SnackbarHost(snackbarHostState) { data ->
-                Snackbar(
-                    action = data.visuals.actionLabel?.let { label ->
-                        { TextButton(onClick = { data.performAction() }) { Text(label) } }
-                    },
-                    dismissAction = if (data.visuals.withDismissAction) {
-                        {
-                            IconButton(onClick = {
-                                dismissTracker.byUser = true
-                                data.dismiss()
-                            }) {
-                                Icon(Icons.Default.Close, contentDescription = "Cerrar")
-                            }
+    // The host is rendered by each screen's own Scaffold (snackbarHost slot) so it sits above that screen's FAB or
+    // bottom bar; the state, runner and collectors stay here.
+    val snackbarHost: @Composable () -> Unit = {
+        SnackbarHost(snackbarHostState) { data ->
+            Snackbar(
+                action = data.visuals.actionLabel?.let { label ->
+                    { TextButton(onClick = { data.performAction() }) { Text(label) } }
+                },
+                dismissAction = if (data.visuals.withDismissAction) {
+                    {
+                        IconButton(onClick = {
+                            dismissTracker.byUser = true
+                            data.dismiss()
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cerrar")
                         }
-                    } else {
-                        null
-                    },
-                ) { Text(data.visuals.message) }
-            }
-        },
+                    }
+                } else {
+                    null
+                },
+            ) { Text(data.visuals.message) }
+        }
+    }
+
+    Scaffold(
         bottomBar = {
             if (BlockAppRoutes.showsBottomBar(currentRoute)) {
                 BlockAppBottomBar(currentRoute = currentRoute, onTabSelected = navController::navigateToTab)
@@ -100,6 +103,7 @@ fun BlockAppRoot(rootSnackbarViewModel: RootSnackbarViewModel) {
             navController = navController,
             rootSnackbarViewModel = rootSnackbarViewModel,
             onBlocksListEntered = undoRunner::unpark,
+            snackbarHost = snackbarHost,
             modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
         )
     }

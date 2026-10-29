@@ -50,6 +50,7 @@ import com.leo.blockapp.adapters.input.ui.root.RootSnackbarViewModel
 @Composable
 fun BlockEditorScreen(
     rootSnackbarViewModel: RootSnackbarViewModel,
+    snackbarHost: @Composable () -> Unit,
     onClose: () -> Unit,
     viewModel: BlockEditorViewModel = hiltViewModel(),
 ) {
@@ -79,6 +80,7 @@ fun BlockEditorScreen(
 
     BlockEditorContent(
         uiState = uiState,
+        snackbarHost = snackbarHost,
         actions = EditorActions(
             onBack = requestBack,
             onNameChange = viewModel::setNameText,
@@ -126,9 +128,17 @@ private class EditorActions(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BlockEditorContent(uiState: BlockEditorUiState, actions: EditorActions) {
+private fun BlockEditorContent(
+    uiState: BlockEditorUiState,
+    snackbarHost: @Composable () -> Unit,
+    actions: EditorActions,
+) {
     val ready = uiState as? BlockEditorUiState.Ready
     Scaffold(
+        // IME insets are applied once, here: the Save bar and the snackbar both ride above the keyboard and the
+        // list inside must not add its own IME padding.
+        modifier = Modifier.imePadding(),
+        snackbarHost = snackbarHost,
         topBar = {
             TopAppBar(
                 title = { Text(if (ready?.isNew == false) "Editar bloqueo" else "Nuevo bloqueo") },
@@ -166,10 +176,12 @@ private fun BlockEditorContent(uiState: BlockEditorUiState, actions: EditorActio
 @Composable
 private fun EditorForm(state: BlockEditorUiState.Ready, actions: EditorActions, modifier: Modifier = Modifier) {
     val inputsEnabled = !state.isSaving
-    val pickerRows = AppSearch.pickerList(state.apps, state.searchQuery, state.openedSelection)
+    val pickerRows = remember(state.apps, state.searchQuery, state.openedSelection) {
+        AppSearch.pickerList(state.apps, state.searchQuery, state.openedSelection)
+    }
 
     LazyColumn(
-        modifier = modifier.fillMaxSize().imePadding(),
+        modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

@@ -30,6 +30,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -40,6 +42,7 @@ import com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme
 @Composable
 fun BlocksListScreen(
     rootSnackbarViewModel: RootSnackbarViewModel,
+    snackbarHost: @Composable () -> Unit,
     onAddBlock: () -> Unit,
     onEditBlock: (blockId: String) -> Unit,
     onEntered: () -> Unit,
@@ -62,6 +65,7 @@ fun BlocksListScreen(
 
     BlocksListContent(
         uiState = uiState,
+        snackbarHost = snackbarHost,
         onAddBlock = onAddBlock,
         onEditBlock = onEditBlock,
         onSetEnabled = viewModel::setEnabled,
@@ -77,9 +81,11 @@ private fun BlocksListContent(
     onEditBlock: (String) -> Unit,
     onSetEnabled: (id: String, enabled: Boolean) -> Unit,
     onDeleteBlock: (String) -> Unit,
+    snackbarHost: @Composable () -> Unit = {},
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("Bloqueos") }) },
+        snackbarHost = snackbarHost,
         floatingActionButton = {
             FloatingActionButton(onClick = onAddBlock) {
                 Icon(Icons.Default.Add, contentDescription = "Nuevo bloqueo")
@@ -127,7 +133,12 @@ private fun BlocksList(
                 supportingContent = { Text(appCountText(item.appCount)) },
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = item.enabled, onCheckedChange = { onSetEnabled(item.id, it) })
+                        val switchDescription = "Activar ${item.name}"
+                        Switch(
+                            checked = item.enabled,
+                            onCheckedChange = { onSetEnabled(item.id, it) },
+                            modifier = Modifier.semantics { contentDescription = switchDescription },
+                        )
                         IconButton(onClick = { onDeleteBlock(item.id) }) {
                             Icon(Icons.Default.Delete, contentDescription = "Eliminar ${item.name}")
                         }
