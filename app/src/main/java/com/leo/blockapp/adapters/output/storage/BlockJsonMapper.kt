@@ -2,7 +2,6 @@ package com.leo.blockapp.adapters.output.storage
 
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockRule
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -34,9 +33,8 @@ internal object BlockJsonMapper {
         if (stored.isNullOrBlank()) return emptyList()
         val dto = try {
             json.decodeFromString(StoredBlocksDto.serializer(), stored)
-        } catch (_: SerializationException) {
-            return emptyList()
         } catch (_: IllegalArgumentException) {
+            // Also covers SerializationException, which extends IllegalArgumentException.
             return emptyList()
         }
         if (dto.schemaVersion > SCHEMA_VERSION) return emptyList()
