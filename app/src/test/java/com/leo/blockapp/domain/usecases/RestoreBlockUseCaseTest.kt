@@ -277,6 +277,49 @@ class RestoreBlockUseCaseTest {
         assertEquals(listOf("B1", "B2", "B3"), repository.getBlocks().map { it.id })
     }
 
+    private fun newBlockDraft() = BlockDraft(null, "Nuevo", linkedSetOf("com.new.app"), richRule)
+
+    @Test
+    fun `deleting the last block, creating one and restoring places the restored block by position and id`() = runTest {
+        // The new block reuses the deleted block's position, so the tie is broken by id.
+        for ((maxId, expected) in listOf(
+            "B3" to listOf("B1", "B2", "B3", "generated-1"),
+            "zz" to listOf("B1", "B2", "generated-1", "zz"),
+        )) {
+            val last = block("B3", tiktok.packageName).copy(id = maxId)
+            val repository = FakeBlockRepository(listOf(original[0], original[1], last))
+
+            val deleted = DeleteBlockUseCase(repository)(maxId)!!
+            SaveBlockUseCase(repository, FakeIdGenerator(), catalog)(newBlockDraft())
+            assertEquals(last.position, repository.getBlocks().last().position)
+            restoreBlockOver(repository)(deleted)
+
+            assertEquals("last block $maxId", expected, repository.getBlocks().map { it.id })
+        }
+    }
+
+    @Test
+    fun `restoring blocks that share a position ends in the same order whatever the undo order`() = runTest {
+        for (maxId in listOf("B3", "zz")) {
+            val finalOrders = permutationsOf(listOf(maxId, "generated-1")).map { undoOrder ->
+                val last = block("B3", tiktok.packageName).copy(id = maxId)
+                val repository = FakeBlockRepository(listOf(original[0], original[1], last))
+                val deleteBlock = DeleteBlockUseCase(repository)
+
+                val deletedLast = deleteBlock(maxId)!!
+                SaveBlockUseCase(repository, FakeIdGenerator(), catalog)(newBlockDraft())
+                val deletedNew = deleteBlock("generated-1")!!
+                val deletedById = mapOf(maxId to deletedLast, "generated-1" to deletedNew)
+                undoOrder.forEach { restoreBlockOver(repository)(deletedById.getValue(it)) }
+
+                repository.getBlocks().map { it.id }
+            }
+
+            assertEquals("last block $maxId", 1, finalOrders.toSet().size)
+            assertEquals(listOf("B1", "B2"), finalOrders.first().take(2))
+        }
+    }
+
     private fun permutationsOf(ids: List<String>): List<List<String>> =
         if (ids.size <= 1) listOf(ids) else ids.flatMap { head -> permutationsOf(ids - head).map { listOf(head) + it } }
 

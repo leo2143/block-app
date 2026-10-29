@@ -18,7 +18,8 @@ import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
  * Validates, resolves app conflicts and writes in ONE repository transaction, so two concurrent
  * saves can never both claim the same app. App labels are fetched before the transaction because
  * the transform must not suspend. A new block is appended with position = highest stored position + 1; an
- * edit keeps its position and moving apps never touches the positions of the source blocks.
+ * edit keeps its position and moving apps never touches the positions of the source blocks. Because the new
+ * position is strictly above every stored one, appending keeps the (position, id) order of the stored list.
  */
 class SaveBlockUseCase(
     private val blockRepository: BlockRepository,

@@ -3,12 +3,17 @@ package com.leo.blockapp.domain.ports.output
 import com.leo.blockapp.domain.model.Block
 import kotlinx.coroutines.flow.Flow
 
-/** Output port: block configuration storage. The only write path is [update]. */
+/**
+ * Output port: block configuration storage. The only write path is [update]. Every stored list this port exposes
+ * ([observeBlocks], [getBlocks], the `current` snapshot given to [update]) is ordered by ([Block.position],
+ * [Block.id]) ascending, a total and deterministic order (equal positions can occur after deleting the last block
+ * and creating one; ties are broken by id). Implementations must keep that order.
+ */
 interface BlockRepository {
-    /** Emits the full block list on every change. */
+    /** Emits the full block list on every change, ordered by (position, id). */
     fun observeBlocks(): Flow<List<Block>>
 
-    /** One-off read for display only. Never use it for read-then-write; use [update] instead. */
+    /** One-off read for display only, ordered by (position, id). Never use it for read-then-write; use [update] instead. */
     suspend fun getBlocks(): List<Block>
 
     /**
@@ -35,6 +40,8 @@ data class BlockUpdate<T>(
  * - [insertAt] entries for ids that are already stored, deleted or not upserted are ignored.
  * - Deletion wins: an id present in both [upserts] and [deletedIds] ends up deleted, never stored.
  * - Ids in [deletedIds] that are not stored are ignored.
+ * - The resulting list must be ordered by ([Block.position], [Block.id]) ascending. Callers choose [insertAt] to
+ *   guarantee it; an implementation rejects a result that breaks it with an IllegalArgumentException and writes nothing.
  */
 data class BlockChanges(
     val upserts: List<Block> = emptyList(),

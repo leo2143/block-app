@@ -16,7 +16,11 @@ import java.io.IOException
 
 class FakeBlockRepositoryTest {
 
-    private fun block(id: String, vararg packageNames: String, position: Long = 0) = Block(
+    private fun block(
+        id: String,
+        vararg packageNames: String,
+        position: Long = id.removePrefix("B").toLong(),
+    ) = Block(
         id = id,
         name = "Block $id",
         packageNames = linkedSetOf(*packageNames),
@@ -77,10 +81,40 @@ class FakeBlockRepositoryTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a")))
 
         repository.update {
-            BlockUpdate(BlockChanges(upserts = listOf(block("B3", "c"), block("B2", "b"))), Unit)
+            BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b"), block("B3", "c"))), Unit)
         }
 
-        assertEquals(listOf("B1", "B3", "B2"), repository.getBlocks().map { it.id })
+        assertEquals(listOf("B1", "B2", "B3"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `a write that breaks the position and id order is rejected and nothing is written`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B0", "c", position = 0))), Unit) }
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b", position = 0))), Unit) }
+            }
+        }
+
+        assertEquals(listOf(block("B1", "a"), block("B2", "b")), repository.getBlocks())
+        assertEquals(0, repository.writes.size)
+    }
+
+    @Test
+    fun `equal positions are ordered by id`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a", position = 1)))
+
+        repository.update {
+            BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b", position = 1)), insertAt = mapOf("B2" to 1)), Unit)
+        }
+
+        assertEquals(listOf("B1", "B2"), repository.getBlocks().map { it.id })
     }
 
     @Test
@@ -89,7 +123,11 @@ class FakeBlockRepositoryTest {
 
         repository.update {
             BlockUpdate(
-                BlockChanges(upserts = listOf(block("B4", "d")), deletedIds = setOf("B1"), insertAt = mapOf("B4" to 1)),
+                BlockChanges(
+                    upserts = listOf(block("B4", "d", position = 2)),
+                    deletedIds = setOf("B1"),
+                    insertAt = mapOf("B4" to 1),
+                ),
                 Unit,
             )
         }
@@ -104,14 +142,14 @@ class FakeBlockRepositoryTest {
         repository.update {
             BlockUpdate(
                 BlockChanges(
-                    upserts = listOf(block("B3", "c"), block("B4", "d")),
-                    insertAt = mapOf("B3" to 99, "B4" to -5),
+                    upserts = listOf(block("B3", "c"), block("B0", "d")),
+                    insertAt = mapOf("B3" to 99, "B0" to -5),
                 ),
                 Unit,
             )
         }
 
-        assertEquals(listOf("B4", "B1", "B2", "B3"), repository.getBlocks().map { it.id })
+        assertEquals(listOf("B0", "B1", "B2", "B3"), repository.getBlocks().map { it.id })
     }
 
     @Test
