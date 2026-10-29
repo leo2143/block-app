@@ -1,8 +1,8 @@
 package com.leo.blockapp.domain.fakes
 
-import com.leo.blockapp.domain.model.Block
-import com.leo.blockapp.domain.model.BlockRule
 import com.leo.blockapp.domain.ports.output.BlockChanges
+import com.leo.blockapp.domain.ports.output.BlockRepository
+import com.leo.blockapp.domain.ports.output.BlockRepositoryContract
 import com.leo.blockapp.domain.ports.output.BlockUpdate
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -14,19 +14,10 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.IOException
 
-class FakeBlockRepositoryTest {
+/** Runs the shared repository contract against the fake, plus the fake's own recording and failure-injection hooks. */
+class FakeBlockRepositoryTest : BlockRepositoryContract() {
 
-    private fun block(
-        id: String,
-        vararg packageNames: String,
-        position: Long = id.removePrefix("B").toLong(),
-    ) = Block(
-        id = id,
-        name = "Block $id",
-        packageNames = linkedSetOf(*packageNames),
-        rule = BlockRule.AccumulatedUsageWithCooldown(usageLimitMinutes = 10, cooldownMinutes = 60),
-        position = position,
-    )
+    override fun createRepository(): BlockRepository = FakeBlockRepository()
 
     @Test
     fun `empty changes perform no write`() = runTest {
@@ -36,134 +27,28 @@ class FakeBlockRepositoryTest {
 
         assertEquals(1, result)
         assertEquals(0, repository.writes.size)
-        assertEquals(listOf(block("B1", "a")), repository.getBlocks())
     }
 
     @Test
-    fun `upserts replace by id in place and append new blocks`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
+    fun `a real write is recorded once`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", "a")))
 
-        repository.update {
-            BlockUpdate(BlockChanges(upserts = listOf(block("B1", "a", "c"), block("B3", "d"))), Unit)
-        }
+        repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b"))), Unit) }
 
-        assertEquals(
-            listOf(block("B1", "a", "c"), block("B2", "b"), block("B3", "d")),
-            repository.getBlocks(),
-        )
         assertEquals(1, repository.writes.size)
     }
 
     @Test
-    fun `deletions and upserts apply together`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
-
-        repository.update {
-            BlockUpdate(BlockChanges(upserts = listOf(block("B3", "a")), deletedIds = setOf("B1")), Unit)
-        }
-
-        assertEquals(listOf(block("B2", "b"), block("B3", "a")), repository.getBlocks())
-    }
-
-    @Test
-    fun `deletion wins when an id is both upserted and deleted`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
-
-        repository.update {
-            BlockUpdate(BlockChanges(upserts = listOf(block("B1", "z"), block("B3", "c")), deletedIds = setOf("B1", "B3")), Unit)
-        }
-
-        assertEquals(listOf(block("B2", "b")), repository.getBlocks())
-    }
-
-    @Test
-    fun `upsert of a missing id appends it at the end in the given order`() = runTest {
+    fun `a rejected write is not recorded`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a")))
-
-        repository.update {
-            BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b"), block("B3", "c"))), Unit)
-        }
-
-        assertEquals(listOf("B1", "B2", "B3"), repository.getBlocks().map { it.id })
-    }
-
-    @Test
-    fun `a write that breaks the position and id order is rejected and nothing is written`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
 
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
                 repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B0", "c", position = 0))), Unit) }
             }
         }
-        assertThrows(IllegalArgumentException::class.java) {
-            runBlocking {
-                repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b", position = 0))), Unit) }
-            }
-        }
 
-        assertEquals(listOf(block("B1", "a"), block("B2", "b")), repository.getBlocks())
         assertEquals(0, repository.writes.size)
-    }
-
-    @Test
-    fun `equal positions are ordered by id`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a", position = 1)))
-
-        repository.update {
-            BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b", position = 1)), insertAt = mapOf("B2" to 1)), Unit)
-        }
-
-        assertEquals(listOf("B1", "B2"), repository.getBlocks().map { it.id })
-    }
-
-    @Test
-    fun `insertAt places a new id at that index of the list after deletions`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
-
-        repository.update {
-            BlockUpdate(
-                BlockChanges(
-                    upserts = listOf(block("B4", "d", position = 2)),
-                    deletedIds = setOf("B1"),
-                    insertAt = mapOf("B4" to 1),
-                ),
-                Unit,
-            )
-        }
-
-        assertEquals(listOf("B2", "B4", "B3"), repository.getBlocks().map { it.id })
-    }
-
-    @Test
-    fun `insertAt is clamped to the list bounds`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
-
-        repository.update {
-            BlockUpdate(
-                BlockChanges(
-                    upserts = listOf(block("B3", "c"), block("B0", "d")),
-                    insertAt = mapOf("B3" to 99, "B0" to -5),
-                ),
-                Unit,
-            )
-        }
-
-        assertEquals(listOf("B0", "B1", "B2", "B3"), repository.getBlocks().map { it.id })
-    }
-
-    @Test
-    fun `insertAt is ignored for ids that are already stored and for ids without an entry`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b")))
-
-        repository.update {
-            BlockUpdate(
-                BlockChanges(upserts = listOf(block("B2", "z"), block("B3", "c")), insertAt = mapOf("B2" to 0)),
-                Unit,
-            )
-        }
-
-        assertEquals(listOf("B1", "B2", "B3"), repository.getBlocks().map { it.id })
     }
 
     @Test
@@ -178,33 +63,7 @@ class FakeBlockRepositoryTest {
     }
 
     @Test
-    fun `upsert of an existing id keeps its position`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
-
-        repository.update { BlockUpdate(BlockChanges(upserts = listOf(block("B2", "z"))), Unit) }
-
-        assertEquals(listOf("B1", "B2", "B3"), repository.getBlocks().map { it.id })
-        assertEquals(listOf("z"), repository.getBlocks()[1].packageNames.toList())
-    }
-
-    @Test
-    fun `duplicate ids in upserts are rejected and nothing is written`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a")))
-
-        assertThrows(IllegalArgumentException::class.java) {
-            runBlocking {
-                repository.update {
-                    BlockUpdate(BlockChanges(upserts = listOf(block("B2", "b"), block("B2", "c"))), Unit)
-                }
-            }
-        }
-
-        assertEquals(listOf(block("B1", "a")), repository.getBlocks())
-        assertEquals(0, repository.writes.size)
-    }
-
-    @Test
-    fun `concurrent updates are serialized so none loses the other`() = runTest {
+    fun `concurrent updates inside the read-then-write window are serialized`() = runTest {
         // yield() inside the read-then-write window forces interleaving unless the lock serializes updates.
         val repository = FakeBlockRepository(emptyList(), beforeApply = { yield() })
 
