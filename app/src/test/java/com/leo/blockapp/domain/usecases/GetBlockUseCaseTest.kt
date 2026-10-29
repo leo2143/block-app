@@ -10,11 +10,12 @@ import org.junit.Test
 
 class GetBlockUseCaseTest {
 
-    private fun block(id: String, vararg packageNames: String, enabled: Boolean = true) = Block(
+    private fun block(id: String, vararg packageNames: String, enabled: Boolean = true, position: Long = 0) = Block(
         id = id,
         name = "Block $id",
         packageNames = linkedSetOf(*packageNames),
         rule = BlockRule.AccumulatedUsageWithCooldown(usageLimitMinutes = 10, cooldownMinutes = 60),
+        position = position,
         enabled = enabled,
     )
 

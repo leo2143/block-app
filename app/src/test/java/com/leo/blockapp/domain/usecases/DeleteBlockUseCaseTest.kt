@@ -26,6 +26,7 @@ class DeleteBlockUseCaseTest {
         name = "Block $id",
         packageNames = linkedSetOf(*packageNames),
         rule = richRule,
+        position = id.removePrefix("B").toLong() - 1,
         enabled = enabled,
     )
 
@@ -35,7 +36,7 @@ class DeleteBlockUseCaseTest {
 
         val removed = DeleteBlockUseCase(repository)("B1")
 
-        assertEquals(DeletedBlock(block("B1", "c", "a"), emptyList(), listOf("B2")), removed)
+        assertEquals(DeletedBlock(block("B1", "c", "a")), removed)
         assertEquals(listOf("c", "a"), removed!!.block.packageNames.toList())
         assertEquals(listOf(block("B2", "b")), repository.getBlocks())
         assertEquals(1, repository.writes.size)
@@ -43,30 +44,12 @@ class DeleteBlockUseCaseTest {
     }
 
     @Test
-    fun `reports the ids before and after the block in list order at delete time`() = runTest {
+    fun `the returned block carries its stable position`() = runTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c")))
 
-        val middle = DeleteBlockUseCase(repository)("B2")!!
-        assertEquals(listOf("B1"), middle.precedingBlockIds)
-        assertEquals(listOf("B3"), middle.followingBlockIds)
-
-        val last = DeleteBlockUseCase(repository)("B3")!!
-        assertEquals(listOf("B1"), last.precedingBlockIds)
-        assertEquals(emptyList<String>(), last.followingBlockIds)
-
-        val first = DeleteBlockUseCase(repository)("B1")!!
-        assertEquals(emptyList<String>(), first.precedingBlockIds)
-        assertEquals(emptyList<String>(), first.followingBlockIds)
-    }
-
-    @Test
-    fun `neighbor ids keep the full list order on both sides`() = runTest {
-        val repository = FakeBlockRepository(listOf(block("B1", "a"), block("B2", "b"), block("B3", "c"), block("B4", "d")))
-
-        val deleted = DeleteBlockUseCase(repository)("B3")!!
-
-        assertEquals(listOf("B1", "B2"), deleted.precedingBlockIds)
-        assertEquals(listOf("B4"), deleted.followingBlockIds)
+        assertEquals(1L, DeleteBlockUseCase(repository)("B2")!!.block.position)
+        assertEquals(2L, DeleteBlockUseCase(repository)("B3")!!.block.position)
+        assertEquals(0L, DeleteBlockUseCase(repository)("B1")!!.block.position)
     }
 
     @Test
@@ -74,7 +57,7 @@ class DeleteBlockUseCaseTest {
         val repository = FakeBlockRepository(listOf(block("B1", "a", enabled = false)))
 
         assertEquals(
-            DeletedBlock(block("B1", "a", enabled = false), emptyList(), emptyList()),
+            DeletedBlock(block("B1", "a", enabled = false)),
             DeleteBlockUseCase(repository)("B1"),
         )
         assertEquals(emptyList<Block>(), repository.getBlocks())
@@ -106,7 +89,7 @@ class DeleteBlockUseCaseTest {
 
         val results = listOf(async { deleteBlock("B1") }, async { deleteBlock("B1") }).awaitAll()
 
-        assertEquals(listOf(DeletedBlock(block("B1", "a"), emptyList(), emptyList())), results.filterNotNull())
+        assertEquals(listOf(DeletedBlock(block("B1", "a"))), results.filterNotNull())
         assertEquals(1, results.count { it == null })
         assertEquals(1, repository.writes.size)
     }

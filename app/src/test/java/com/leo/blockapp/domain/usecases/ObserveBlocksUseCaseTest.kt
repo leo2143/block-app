@@ -16,11 +16,12 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ObserveBlocksUseCaseTest {
 
-    private fun block(id: String, vararg packageNames: String) = Block(
+    private fun block(id: String, vararg packageNames: String, position: Long = 0) = Block(
         id = id,
         name = "Block $id",
         packageNames = linkedSetOf(*packageNames),
         rule = BlockRule.AccumulatedUsageWithCooldown(usageLimitMinutes = 10, cooldownMinutes = 60),
+        position = position,
     )
 
     @Test
