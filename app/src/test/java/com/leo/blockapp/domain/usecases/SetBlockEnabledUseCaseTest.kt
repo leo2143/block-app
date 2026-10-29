@@ -19,11 +19,12 @@ class SetBlockEnabledUseCaseTest {
         inactivityResetMinutes = 30,
     )
 
-    private fun block(id: String, vararg packageNames: String, enabled: Boolean = true) = Block(
+    private fun block(id: String, vararg packageNames: String, enabled: Boolean = true, position: Long = 0) = Block(
         id = id,
         name = "Block $id",
         packageNames = linkedSetOf(*packageNames),
         rule = richRule,
+        position = position,
         enabled = enabled,
     )
 

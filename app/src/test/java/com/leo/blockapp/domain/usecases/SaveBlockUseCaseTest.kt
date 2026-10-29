@@ -33,7 +33,7 @@ class SaveBlockUseCaseTest {
         vararg packageNames: String,
         name: String = "Block $id",
         enabled: Boolean = true,
-    ) = Block(id, name, linkedSetOf(*packageNames), defaultRule, enabled)
+    ) = Block(id, name, linkedSetOf(*packageNames), defaultRule, position = id.removePrefix("B").toLongOrNull()?.minus(1) ?: 0, enabled = enabled)
 
     private fun draft(
         id: String? = null,
@@ -60,7 +60,7 @@ class SaveBlockUseCaseTest {
         val result = saveBlockOver(repository)(draft(name = "  Redes  "))
 
         val saved = result as SaveBlockResult.Saved
-        assertEquals(Block("generated-1", "Redes", linkedSetOf(instagram.packageName), defaultRule, true), saved.block)
+        assertEquals(Block("generated-1", "Redes", linkedSetOf(instagram.packageName), defaultRule, position = 0, enabled = true), saved.block)
         assertEquals(listOf(saved.block), repository.getBlocks())
         assertEquals(1, repository.writes.size)
     }
@@ -486,5 +486,72 @@ class SaveBlockUseCaseTest {
         saveBlockOver(repository)(draft(packageNames = listOf(instagram.packageName, x.packageName)))
 
         assertEquals(1, catalog.requestCount)
+    }
+
+    @Test
+    fun `a new block is appended with the next position after the highest stored one`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName), block("B2", x.packageName)))
+
+        val saved = saveBlockOver(repository)(draft(packageNames = listOf(tiktok.packageName))) as SaveBlockResult.Saved
+
+        assertEquals(2L, saved.block.position)
+        assertEquals(listOf("B1", "B2", "generated-1"), repository.getBlocks().map { it.id })
+    }
+
+    @Test
+    fun `the next position follows the highest one even when earlier blocks were deleted`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName), block("B3", x.packageName)))
+
+        val saved = saveBlockOver(repository)(draft(packageNames = listOf(tiktok.packageName))) as SaveBlockResult.Saved
+
+        assertEquals(3L, saved.block.position)
+    }
+
+    @Test
+    fun `a create with an unknown id is appended with the next position`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName)))
+
+        val saved = saveBlockOver(repository)(draft(id = "B9", packageNames = listOf(x.packageName))) as SaveBlockResult.Saved
+
+        assertEquals("B9", saved.block.id)
+        assertEquals(1L, saved.block.position)
+    }
+
+    @Test
+    fun `consecutive creates get increasing positions`() = runTest {
+        val repository = FakeBlockRepository()
+        val saveBlock = saveBlockOver(repository)
+
+        val first = saveBlock(draft(packageNames = listOf(instagram.packageName))) as SaveBlockResult.Saved
+        val second = saveBlock(draft(packageNames = listOf(x.packageName))) as SaveBlockResult.Saved
+        val third = saveBlock(draft(packageNames = listOf(tiktok.packageName))) as SaveBlockResult.Saved
+
+        assertEquals(listOf(0L, 1L, 2L), listOf(first, second, third).map { it.block.position })
+    }
+
+    @Test
+    fun `editing a block keeps its position`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName), block("B2", x.packageName)))
+
+        val saved = saveBlockOver(repository)(
+            draft(id = "B1", name = "Renamed", packageNames = listOf(instagram.packageName)),
+        ) as SaveBlockResult.Saved
+
+        assertEquals(0L, saved.block.position)
+        assertEquals(listOf(0L, 1L), repository.getBlocks().map { it.position })
+    }
+
+    @Test
+    fun `moving apps out of other blocks does not change their positions`() = runTest {
+        val repository = FakeBlockRepository(
+            listOf(block("B1", instagram.packageName, "k1"), block("B2", x.packageName, "k2")),
+        )
+
+        saveBlockOver(repository)(
+            draft(packageNames = listOf(instagram.packageName, x.packageName)),
+            confirmedMovePackages = setOf(instagram.packageName, x.packageName),
+        )
+
+        assertEquals(listOf(0L, 1L, 2L), repository.getBlocks().map { it.position })
     }
 }

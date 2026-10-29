@@ -14,15 +14,13 @@ import com.leo.blockapp.domain.ports.output.BlockUpdate
 import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 
 /**
- * Brings back a deleted block next to its original neighbors with only the apps no other block holds (paused
- * blocks hold theirs too). Inside the same transaction it is inserted before the first following neighbor that
- * still exists; failing that, right after the last preceding neighbor that still exists; failing that, at the
- * end. This recovers the original list for reverse undo order and for most FIFO cases. Known limit: a record
- * cannot know about a neighbor deleted after it, so deleting a middle block and then its previous neighbor
- * and undoing FIFO restores those two swapped. If a block with the same id already exists, nothing is written and the existing block is never
- * overwritten, so a stale or repeated restore is idempotent and keeps later edits. App labels are fetched
- * before the transaction because the transform must not suspend. No re-validation: the block was valid when
- * it was deleted.
+ * Brings back a deleted block at its original place with only the apps no other block holds (paused blocks hold
+ * theirs too). Inside the same transaction it is inserted at the index equal to the number of current blocks with
+ * a lower [Block.position], so restoring any set of deletions in any order reproduces the original relative
+ * order and a block created meanwhile stays after it. If a block with the same id already exists, nothing is
+ * written and the existing block is never overwritten, so a stale or repeated restore is idempotent and keeps
+ * later edits. App labels are fetched before the transaction because the transform must not suspend. No
+ * re-validation: the block was valid when it was deleted.
  */
 class RestoreBlockUseCase(
     private val blockRepository: BlockRepository,
@@ -71,18 +69,12 @@ class RestoreBlockUseCase(
         } else {
             RestoreBlockResult.PartiallyRestored(restored, skippedApps, summary)
         }
-        val position = restorePosition(deletedBlock, currentBlocks)
-        return BlockUpdate(BlockChanges(upserts = listOf(restored), insertAt = mapOf(restored.id to position)), result)
+        val index = restoreIndex(restored, currentBlocks)
+        return BlockUpdate(BlockChanges(upserts = listOf(restored), insertAt = mapOf(restored.id to index)), result)
     }
 
-    private fun restorePosition(deletedBlock: DeletedBlock, currentBlocks: List<Block>): Int {
-        val currentIds = currentBlocks.map { it.id }
-        val firstSurvivingFollowing = deletedBlock.followingBlockIds.firstOrNull { it in currentIds }
-        if (firstSurvivingFollowing != null) return currentIds.indexOf(firstSurvivingFollowing)
-        val lastSurvivingPreceding = deletedBlock.precedingBlockIds.lastOrNull { it in currentIds }
-        if (lastSurvivingPreceding != null) return currentIds.indexOf(lastSurvivingPreceding) + 1
-        return currentIds.size
-    }
+    private fun restoreIndex(restored: Block, currentBlocks: List<Block>) =
+        currentBlocks.count { it.position < restored.position }
 
     private fun alreadyPresent(storedBlock: Block) = RestoreBlockResult.Restored(
         storedBlock,

@@ -17,11 +17,12 @@ class ListSelectableAppsUseCaseTest {
     private val x = InstalledApp("com.twitter.android", "X")
     private val tiktok = InstalledApp("com.tiktok", "TikTok")
 
-    private fun block(id: String, vararg packageNames: String, enabled: Boolean = true) = Block(
+    private fun block(id: String, vararg packageNames: String, enabled: Boolean = true, position: Long = 0) = Block(
         id = id,
         name = "Block $id",
         packageNames = linkedSetOf(*packageNames),
         rule = BlockRule.AccumulatedUsageWithCooldown(usageLimitMinutes = 10, cooldownMinutes = 60),
+        position = position,
         enabled = enabled,
     )
 

@@ -17,7 +17,8 @@ import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 /**
  * Validates, resolves app conflicts and writes in ONE repository transaction, so two concurrent
  * saves can never both claim the same app. App labels are fetched before the transaction because
- * the transform must not suspend.
+ * the transform must not suspend. A new block is appended with position = highest stored position + 1; an
+ * edit keeps its position and moving apps never touches the positions of the source blocks.
  */
 class SaveBlockUseCase(
     private val blockRepository: BlockRepository,
@@ -72,6 +73,7 @@ class SaveBlockUseCase(
             name = draft.name.trim(),
             packageNames = LinkedHashSet(draft.packageNames),
             rule = draft.rule,
+            position = existing?.position ?: nextPosition(currentBlocks),
             enabled = existing?.enabled ?: true,
         )
 
@@ -101,6 +103,8 @@ class SaveBlockUseCase(
             result = SaveBlockResult.Saved(target, summary),
         )
     }
+
+    private fun nextPosition(currentBlocks: List<Block>) = (currentBlocks.maxOfOrNull { it.position } ?: -1L) + 1
 
     private fun rejected(result: SaveBlockResult) = BlockUpdate(BlockChanges(), result)
 }
