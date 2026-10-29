@@ -70,25 +70,29 @@ fun BlockAppRoot(rootSnackbarViewModel: RootSnackbarViewModel) {
 
     // The host is rendered by each screen's own Scaffold (snackbarHost slot) so it sits above that screen's FAB or
     // bottom bar; the state, runner and collectors stay here.
-    val snackbarHost: @Composable () -> Unit = {
-        SnackbarHost(snackbarHostState) { data ->
-            Snackbar(
-                action = data.visuals.actionLabel?.let { label ->
-                    { TextButton(onClick = { data.performAction() }) { Text(label) } }
-                },
-                dismissAction = if (data.visuals.withDismissAction) {
-                    {
-                        IconButton(onClick = {
-                            dismissTracker.byUser = true
-                            data.dismiss()
-                        }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cerrar")
+    // Remembered so the lambda keeps a stable identity across recomposition. The NavHost renders it only in the
+    // current destination.
+    val snackbarHost: @Composable () -> Unit = remember(snackbarHostState, dismissTracker) {
+        {
+            SnackbarHost(snackbarHostState) { data ->
+                Snackbar(
+                    action = data.visuals.actionLabel?.let { label ->
+                        { TextButton(onClick = { data.performAction() }) { Text(label) } }
+                    },
+                    dismissAction = if (data.visuals.withDismissAction) {
+                        {
+                            IconButton(onClick = {
+                                dismissTracker.byUser = true
+                                data.dismiss()
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Cerrar")
+                            }
                         }
-                    }
-                } else {
-                    null
-                },
-            ) { Text(data.visuals.message) }
+                    } else {
+                        null
+                    },
+                ) { Text(data.visuals.message) }
+            }
         }
     }
 
