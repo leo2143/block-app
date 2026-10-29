@@ -2,9 +2,13 @@ package com.leo.blockapp.di
 
 import com.leo.blockapp.adapters.output.apps.PackageManagerAppCatalog
 import com.leo.blockapp.adapters.output.clock.DeviceClock
+import com.leo.blockapp.adapters.output.ids.UuidIdGenerator
 import com.leo.blockapp.adapters.output.permissions.AppOpsSystemPermissions
+import com.leo.blockapp.adapters.output.storage.DataStoreBlockRepository
 import com.leo.blockapp.adapters.output.usage.UsageStatsEventSource
+import com.leo.blockapp.domain.ports.output.BlockRepository
 import com.leo.blockapp.domain.ports.output.Clock
+import com.leo.blockapp.domain.ports.output.IdGenerator
 import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 import com.leo.blockapp.domain.ports.output.SystemPermissions
 import com.leo.blockapp.domain.ports.output.UsageEventSource
@@ -29,4 +33,10 @@ abstract class OutputPortsModule {
 
     @Binds
     abstract fun bindClock(implementation: DeviceClock): Clock
+
+    @Binds
+    abstract fun bindBlockRepository(implementation: DataStoreBlockRepository): BlockRepository
+
+    @Binds
+    abstract fun bindIdGenerator(implementation: UuidIdGenerator): IdGenerator
 }

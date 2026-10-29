@@ -11,16 +11,3 @@ data class BlockChangeSummary(
     val addedPackages: Map<String, Set<String>>,
     val removedPackages: Map<String, Set<String>>,
 )
-
-data class BlockReference(
-    val id: String,
-    val name: String,
-)
-
-data class MoveConflict(
-    val packageName: String,
-    val appLabel: String,
-    val fromBlockId: String,
-    val fromBlockName: String,
-    val fromBlockWillBeDeleted: Boolean,
-)

@@ -9,7 +9,7 @@ class BlockTest {
 
     @Test
     fun `block is enabled by default`() {
-        val block = Block(id = "B1", name = "Redes", packageNames = setOf("a"), rule = rule)
+        val block = Block(id = "B1", name = "Redes", packageNames = setOf("a"), rule = rule, position = 0)
         assertEquals(true, block.enabled)
     }
 
@@ -22,7 +22,7 @@ class BlockTest {
     @Test
     fun `package order of a linked set is preserved`() {
         val ordered = linkedSetOf("zeta", "alfa", "mid")
-        val block = Block(id = "B1", name = "Redes", packageNames = ordered, rule = rule)
+        val block = Block(id = "B1", name = "Redes", packageNames = ordered, rule = rule, position = 0)
         assertEquals(listOf("zeta", "alfa", "mid"), block.packageNames.toList())
     }
 
@@ -35,7 +35,7 @@ class BlockTest {
             addedPackages = mapOf("B1" to setOf("a")),
             removedPackages = emptyMap(),
         )
-        val block = Block("B1", "Redes", setOf("a"), rule)
+        val block = Block("B1", "Redes", setOf("a"), rule, position = 0)
         val owner = BlockReference("B1", "Redes")
 
         assertEquals(SaveBlockResult.Saved(block, summary), SaveBlockResult.Saved(block, summary))
