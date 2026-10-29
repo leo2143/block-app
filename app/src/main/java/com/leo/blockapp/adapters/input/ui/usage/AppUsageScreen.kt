@@ -33,7 +33,7 @@ import com.leo.blockapp.domain.model.AppUsage
 import com.leo.blockapp.domain.model.InstalledApp
 
 @Composable
-fun AppUsageScreen(viewModel: AppUsageViewModel = hiltViewModel()) {
+fun AppUsageScreen(snackbarHost: @Composable () -> Unit, viewModel: AppUsageViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -45,14 +45,22 @@ fun AppUsageScreen(viewModel: AppUsageViewModel = hiltViewModel()) {
 
     AppUsageContent(
         uiState = uiState,
+        snackbarHost = snackbarHost,
         onOpenUsageAccessSettings = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
     )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppUsageContent(uiState: AppUsageUiState, onOpenUsageAccessSettings: () -> Unit) {
-    Scaffold(topBar = { TopAppBar(title = { Text("Uso de hoy") }) }) { innerPadding ->
+private fun AppUsageContent(
+    uiState: AppUsageUiState,
+    onOpenUsageAccessSettings: () -> Unit,
+    snackbarHost: @Composable () -> Unit = {},
+) {
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Uso de hoy") }) },
+        snackbarHost = snackbarHost,
+    ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when (uiState) {
                 AppUsageUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))

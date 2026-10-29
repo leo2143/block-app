@@ -67,6 +67,19 @@ class BlockValidatorTest {
     }
 
     @Test
+    fun `inactivity reset accepts 1440`() {
+        assertEquals(emptySet<BlockViolation>(), violationsOf(draft(inactivityResetMinutes = 1440)))
+    }
+
+    @Test
+    fun `too long name is reported together with APPS_EMPTY`() {
+        assertEquals(
+            setOf(BlockViolation.NAME_TOO_LONG, BlockViolation.APPS_EMPTY),
+            violationsOf(draft(name = "a".repeat(41), packageNames = emptySet())),
+        )
+    }
+
+    @Test
     fun `inactivity reset rejects 0 and 1441`() {
         val expected = setOf(BlockViolation.INACTIVITY_RESET_OUT_OF_RANGE)
         assertEquals(expected, violationsOf(draft(inactivityResetMinutes = 0)))

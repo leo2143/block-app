@@ -7,7 +7,7 @@ import com.leo.blockapp.domain.model.BlockViolation
 /** Pure validation of a draft. Reports every violation at once, never throws. */
 object BlockValidator {
 
-    const val MAX_NAME_LENGTH = 40
+    private const val MAX_NAME_LENGTH = 40
     private val usageLimitRange = 1..1440
     private val cooldownRange = 15..1440
     private val inactivityResetRange = 1..1440

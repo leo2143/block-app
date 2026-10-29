@@ -1,11 +1,29 @@
 package com.leo.blockapp.di
 
+import com.leo.blockapp.domain.ports.input.DeleteBlock
+import com.leo.blockapp.domain.ports.input.GetBlock
 import com.leo.blockapp.domain.ports.input.GetTodayUsage
+import com.leo.blockapp.domain.ports.input.ListSelectableApps
+import com.leo.blockapp.domain.ports.input.ObserveBlocks
+import com.leo.blockapp.domain.ports.input.RestoreBlock
+import com.leo.blockapp.domain.ports.input.SaveBlock
+import com.leo.blockapp.domain.ports.input.SetBlockEnabled
+import com.leo.blockapp.domain.ports.input.ValidateBlock
+import com.leo.blockapp.domain.ports.output.BlockRepository
 import com.leo.blockapp.domain.ports.output.Clock
+import com.leo.blockapp.domain.ports.output.IdGenerator
 import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 import com.leo.blockapp.domain.ports.output.SystemPermissions
 import com.leo.blockapp.domain.ports.output.UsageEventSource
+import com.leo.blockapp.domain.usecases.DeleteBlockUseCase
+import com.leo.blockapp.domain.usecases.GetBlockUseCase
 import com.leo.blockapp.domain.usecases.GetTodayUsageUseCase
+import com.leo.blockapp.domain.usecases.ListSelectableAppsUseCase
+import com.leo.blockapp.domain.usecases.ObserveBlocksUseCase
+import com.leo.blockapp.domain.usecases.RestoreBlockUseCase
+import com.leo.blockapp.domain.usecases.SaveBlockUseCase
+import com.leo.blockapp.domain.usecases.SetBlockEnabledUseCase
+import com.leo.blockapp.domain.usecases.ValidateBlockUseCase
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -26,4 +44,40 @@ object UseCasesModule {
         systemPermissions: SystemPermissions,
         clock: Clock,
     ): GetTodayUsage = GetTodayUsageUseCase(usageEventSource, installedAppCatalog, systemPermissions, clock)
+
+    @Provides
+    fun provideObserveBlocks(blockRepository: BlockRepository): ObserveBlocks =
+        ObserveBlocksUseCase(blockRepository)
+
+    @Provides
+    fun provideGetBlock(blockRepository: BlockRepository): GetBlock = GetBlockUseCase(blockRepository)
+
+    @Provides
+    fun provideValidateBlock(): ValidateBlock = ValidateBlockUseCase()
+
+    @Provides
+    fun provideSaveBlock(
+        blockRepository: BlockRepository,
+        idGenerator: IdGenerator,
+        installedAppCatalog: InstalledAppCatalog,
+    ): SaveBlock = SaveBlockUseCase(blockRepository, idGenerator, installedAppCatalog)
+
+    @Provides
+    fun provideSetBlockEnabled(blockRepository: BlockRepository): SetBlockEnabled =
+        SetBlockEnabledUseCase(blockRepository)
+
+    @Provides
+    fun provideDeleteBlock(blockRepository: BlockRepository): DeleteBlock = DeleteBlockUseCase(blockRepository)
+
+    @Provides
+    fun provideRestoreBlock(
+        blockRepository: BlockRepository,
+        installedAppCatalog: InstalledAppCatalog,
+    ): RestoreBlock = RestoreBlockUseCase(blockRepository, installedAppCatalog)
+
+    @Provides
+    fun provideListSelectableApps(
+        blockRepository: BlockRepository,
+        installedAppCatalog: InstalledAppCatalog,
+    ): ListSelectableApps = ListSelectableAppsUseCase(blockRepository, installedAppCatalog)
 }
