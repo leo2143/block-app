@@ -18,6 +18,25 @@ class ArchitectureTest {
         "com.leo.blockapp.domain.model",
         "com.leo.blockapp.domain.ports.input",
         "com.leo.blockapp.adapters.input",
+        // Generated classes the UI legitimately reads (exact names, not packages).
+        "com.leo.blockapp.R",
+        "com.leo.blockapp.BuildConfig",
+    )
+
+    private val forbiddenUiReferences = listOf(
+        "com.leo.blockapp.domain.usecases.SaveBlock",
+        "com.leo.blockapp.domain.blocks.BlockValidator",
+        "com.leo.blockapp.domain.usage.UsageCalculator",
+        "com.leo.blockapp.domain.ports.output.BlockRepository",
+        "com.leo.blockapp.adapters.output.RoomBlockRepository",
+        "com.leo.blockapp.domain.future.NewThing",
+        "com.leo.blockapp.di.AppModule",
+        "com.leo.blockapp.domain.modelx.Foo",
+        "com.leo.blockapp.adapters.inputs.Foo",
+        "com.leo.blockapp.domain.ports.inputX.Foo",
+        "com.leo.blockapp.domain.model_x.Foo",
+        "com.leo.blockapp.Repo",
+        "com.leo.blockapp.*",
     )
 
     /** Any `com.leo.blockapp.` reference (import or fully qualified) that is not in the allowlist. */
@@ -134,21 +153,13 @@ class ArchitectureTest {
                 "import com.leo.blockapp.domain.model.BlockViolation\n" +
                 "import com.leo.blockapp.domain.ports.input.SaveBlock\n" +
                 "import com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme\n" +
+                "import com.leo.blockapp.R\n" +
+                "import com.leo.blockapp.BuildConfig\n" +
                 "val own = com.leo.blockapp.domain.model.AppUsage()\n",
         )
 
         assertEquals(emptyList<String>(), violations)
     }
-
-    private val forbiddenUiReferences = listOf(
-        "com.leo.blockapp.domain.usecases.SaveBlock",
-        "com.leo.blockapp.domain.blocks.BlockValidator",
-        "com.leo.blockapp.domain.usage.UsageCalculator",
-        "com.leo.blockapp.domain.ports.output.BlockRepository",
-        "com.leo.blockapp.adapters.output.RoomBlockRepository",
-        "com.leo.blockapp.domain.future.NewThing",
-        "com.leo.blockapp.di.AppModule",
-    )
 
     private fun scanUi(source: String): List<String> {
         val scratchDirectory = createTempDirectory(prefix = "architecture-scan").toFile()
