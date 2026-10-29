@@ -1,12 +1,13 @@
 package com.leo.blockapp.adapters.input.ui.blocks
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import com.leo.blockapp.domain.model.SelectableApp
 
 /**
@@ -20,10 +21,16 @@ internal fun LazyListScope.appPickerItems(
     onToggle: (packageName: String) -> Unit,
 ) {
     items(rows, key = { it.packageName }) { app ->
+        val checked = app.packageName in selectedPackages
         ListItem(
-            modifier = Modifier.clickable(enabled = enabled) { onToggle(app.packageName) },
+            modifier = Modifier.toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = { onToggle(app.packageName) },
+            ),
             leadingContent = {
-                Checkbox(checked = app.packageName in selectedPackages, onCheckedChange = null, enabled = enabled)
+                Checkbox(checked = checked, onCheckedChange = null, enabled = enabled)
             },
             headlineContent = { Text(app.label) },
             supportingContent = supportingText(app)?.let { text -> { Text(text) } },

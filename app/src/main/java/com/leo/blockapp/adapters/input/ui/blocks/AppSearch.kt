@@ -13,9 +13,12 @@ object AppSearch {
 
     fun search(apps: List<SelectableApp>, query: String): List<SelectableApp> {
         val normalizedQuery = normalize(query.trim())
+        // Each label is normalized exactly once: sort comparators run O(n log n) times.
         return apps
-            .filter { normalizedQuery.isEmpty() || normalize(it.label).contains(normalizedQuery) }
-            .sortedBy { normalize(it.label) }
+            .map { app -> normalize(app.label) to app }
+            .filter { (sortKey, _) -> normalizedQuery.isEmpty() || sortKey.contains(normalizedQuery) }
+            .sortedBy { (sortKey, _) -> sortKey }
+            .map { (_, app) -> app }
     }
 
     /**
