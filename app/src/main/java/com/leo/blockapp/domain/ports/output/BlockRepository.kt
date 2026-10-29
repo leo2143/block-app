@@ -13,8 +13,8 @@ interface BlockRepository {
 
     /**
      * Runs [transform] against the current blocks and applies its changes in ONE transaction, so a
-     * read-validate-write never spans two calls. [transform] must be pure and fast (no suspend, no IO).
-     * An empty [BlockChanges] performs no write. An IOException from the write propagates.
+     * read-validate-write never spans two calls. [transform] must not suspend or do IO, and should be
+     * fast; generating an id inside it is allowed. An empty [BlockChanges] performs no write. An IOException from the write propagates.
      */
     suspend fun <T> update(transform: (current: List<Block>) -> BlockUpdate<T>): T
 }

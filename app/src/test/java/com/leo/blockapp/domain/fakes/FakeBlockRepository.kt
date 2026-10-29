@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.IOException
 
 /**
  * In-memory repository. [update] is serialized with a [Mutex] so it behaves like a DataStore edit,
@@ -16,6 +17,8 @@ import kotlinx.coroutines.sync.withLock
  * [beforeApply] runs after the transform and before the changes are applied, i.e. inside the
  * read-then-write window. Tests use it to suspend (e.g. `yield()`) so concurrent updates really
  * interleave unless the lock serializes them.
+ *
+ * Set [writeFailure] to make writes fail with an IOException; updates that change nothing still succeed.
  */
 class FakeBlockRepository(
     initialBlocks: List<Block> = emptyList(),
@@ -27,6 +30,10 @@ class FakeBlockRepository(
     private val recordedWrites = mutableListOf<BlockChanges>()
 
     val writes: List<BlockChanges> get() = recordedWrites.toList()
+
+    /** When set, every update that would write throws it instead (like a failing DataStore edit). */
+    @Volatile
+    var writeFailure: IOException? = null
 
     override fun observeBlocks(): Flow<List<Block>> = blocksState
 
@@ -41,6 +48,7 @@ class FakeBlockRepository(
             require(upsertIds.size == upsertIds.toSet().size) { "Duplicate ids in upserts: $upsertIds" }
             beforeApply()
             if (changes.upserts.isNotEmpty() || changes.deletedIds.isNotEmpty()) {
+                writeFailure?.let { throw it }
                 blocksState.value = apply(snapshot, changes)
                 recordedWrites += changes
             }
