@@ -41,14 +41,16 @@ class SaveBlockUseCase(
         if (violations.isNotEmpty()) return rejected(SaveBlockResult.Invalid(violations))
 
         val otherBlocks = currentBlocks.filter { it.id != draft.id }
+        val sourcesById = otherBlocks.associateBy { it.id }
         val packagesMovingBySourceId = draft.packageNames
             .mapNotNull { packageName ->
-                otherBlocks.firstOrNull { packageName in it.packageNames }?.let { it to packageName }
+                otherBlocks.firstOrNull { packageName in it.packageNames }?.let { it.id to packageName }
             }
             .groupBy({ it.first }, { it.second })
             .mapValues { (_, packageNames) -> packageNames.toSet() }
 
-        val conflicts = packagesMovingBySourceId.flatMap { (source, movingPackages) ->
+        val conflicts = packagesMovingBySourceId.flatMap { (sourceId, movingPackages) ->
+            val source = sourcesById.getValue(sourceId)
             val willBeDeleted = (source.packageNames - movingPackages).isEmpty()
             movingPackages
                 .filter { it !in confirmedMovePackages }
@@ -74,22 +76,24 @@ class SaveBlockUseCase(
         )
 
         val emptiedSourceIds = packagesMovingBySourceId
-            .filter { (source, moving) -> (source.packageNames - moving).isEmpty() }
-            .keys.map { it.id }.toSet()
+            .filter { (sourceId, moving) -> (sourcesById.getValue(sourceId).packageNames - moving).isEmpty() }
+            .keys
         val modifiedSources = packagesMovingBySourceId
-            .filterKeys { it.id !in emptiedSourceIds }
-            .map { (source, moving) -> source.copy(packageNames = source.packageNames - moving) }
+            .filterKeys { it !in emptiedSourceIds }
+            .map { (sourceId, moving) ->
+                val source = sourcesById.getValue(sourceId)
+                source.copy(packageNames = source.packageNames - moving)
+            }
 
         val addedToTarget = draft.packageNames - (existing?.packageNames ?: emptySet())
         val removedFromTarget = (existing?.packageNames ?: emptySet()) - draft.packageNames
         val summary = BlockChangeSummary(
-            affectedBlockIds = setOf(target.id) + packagesMovingBySourceId.keys.map { it.id },
+            affectedBlockIds = setOf(target.id) + packagesMovingBySourceId.keys,
             emptiedBlockIds = emptiedSourceIds,
             movedPackages = packagesMovingBySourceId.values.flatten().toSet(),
             addedPackages = mapOf(target.id to addedToTarget).filterValues { it.isNotEmpty() },
             removedPackages = (
-                mapOf(target.id to removedFromTarget) +
-                    packagesMovingBySourceId.mapKeys { it.key.id }
+                mapOf(target.id to removedFromTarget) + packagesMovingBySourceId
                 ).filterValues { it.isNotEmpty() },
         )
         return BlockUpdate(
