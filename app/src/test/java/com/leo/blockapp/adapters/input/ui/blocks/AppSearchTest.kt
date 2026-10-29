@@ -56,4 +56,29 @@ class AppSearchTest {
 
         assertEquals(listOf(missing), AppSearch.search(listOf(missing, app("Reloj")), "old"))
     }
+
+    @Test
+    fun `picker lists apps selected at open first in opening order then the rest sorted`() {
+        val apps = listOf(app("Alfa"), app("Beta"), app("Gamma"), app("Zeta"))
+
+        val result = AppSearch.pickerList(apps, query = "", openedSelection = listOf("zeta", "beta"))
+
+        assertEquals(listOf("Zeta", "Beta", "Alfa", "Gamma"), result.map { it.label })
+    }
+
+    @Test
+    fun `picker applies the query before putting opened apps first`() {
+        val apps = listOf(app("Alfa"), app("Beta"), app("Alba"), app("Zeta"))
+
+        val result = AppSearch.pickerList(apps, query = "al", openedSelection = listOf("alba"))
+
+        assertEquals(listOf("Alba", "Alfa"), result.map { it.label })
+    }
+
+    @Test
+    fun `picker ignores opened packages that are not in the list`() {
+        val result = AppSearch.pickerList(listOf(app("Beta"), app("Alfa")), "", listOf("gone"))
+
+        assertEquals(listOf("Alfa", "Beta"), result.map { it.label })
+    }
 }

@@ -17,4 +17,16 @@ object AppSearch {
             .filter { normalizedQuery.isEmpty() || normalize(it.label).contains(normalizedQuery) }
             .sortedBy { normalize(it.label) }
     }
+
+    /**
+     * Rows for the picker: the apps selected when the editor opened come first, in opening order, so rows do not
+     * jump while the user taps; everything else follows sorted by label. The [query] filters both groups.
+     */
+    fun pickerList(apps: List<SelectableApp>, query: String, openedSelection: List<String>): List<SelectableApp> {
+        val matching = search(apps, query)
+        val matchingByPackage = matching.associateBy { it.packageName }
+        val opened = openedSelection.mapNotNull { matchingByPackage[it] }
+        val openedPackages = opened.mapTo(mutableSetOf()) { it.packageName }
+        return opened + matching.filter { it.packageName !in openedPackages }
+    }
 }
