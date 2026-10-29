@@ -47,4 +47,19 @@ class SuggestedBlockNameTest {
         assertTrue(suggestion.endsWith("…"))
         assertEquals("a".repeat(30) + " y " + "b".repeat(6) + "…", suggestion)
     }
+
+    @Test
+    fun `truncation never leaves half an emoji before the ellipsis`() {
+        val suggestion = SuggestedBlockName.from(listOf("a".repeat(38) + "😀" + "b".repeat(5)))
+
+        assertEquals("a".repeat(38) + "…", suggestion)
+        assertTrue(suggestion.length <= 40)
+    }
+
+    @Test
+    fun `truncation does not leave whitespace before the ellipsis`() {
+        val suggestion = SuggestedBlockName.from(listOf("a".repeat(38) + " " + "b".repeat(5)))
+
+        assertEquals("a".repeat(38) + "…", suggestion)
+    }
 }
