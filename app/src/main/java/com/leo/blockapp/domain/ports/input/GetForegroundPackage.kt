@@ -1,6 +1,8 @@
 package com.leo.blockapp.domain.ports.input
 
-/** Input port: the package currently in the foreground, or null when none is known. */
+import com.leo.blockapp.domain.model.ForegroundApp
+
+/** Input port: the app currently in the foreground and since when, or null when none is known. */
 interface GetForegroundPackage {
-    suspend operator fun invoke(): String?
+    suspend operator fun invoke(): ForegroundApp?
 }

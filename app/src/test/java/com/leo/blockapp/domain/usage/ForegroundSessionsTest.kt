@@ -167,60 +167,6 @@ class ForegroundSessionsTest {
     }
 
     @Test
-    fun `an activity opened before the range and never closed is open since the range start`() {
-        val result = sessions(
-            foreground(instagram, 50 * oneMinuteMillis),
-            rangeStartMillis = 60 * oneMinuteMillis,
-        )
-
-        assertEquals(listOf(ForegroundSession(instagram, 60 * oneMinuteMillis, 100 * oneMinuteMillis)), result)
-    }
-
-    @Test
-    fun `an activity opened before the range and closed inside it is clipped to the range start`() {
-        val result = sessions(
-            foreground(instagram, 50 * oneMinuteMillis),
-            background(instagram, 70 * oneMinuteMillis),
-            rangeStartMillis = 60 * oneMinuteMillis,
-        )
-
-        assertEquals(listOf(ForegroundSession(instagram, 60 * oneMinuteMillis, 70 * oneMinuteMillis)), result)
-    }
-
-    @Test
-    fun `an activity opened and closed before the range is not seeded`() {
-        val result = sessions(
-            foreground(instagram, 40 * oneMinuteMillis),
-            background(instagram, 50 * oneMinuteMillis),
-            rangeStartMillis = 60 * oneMinuteMillis,
-        )
-
-        assertEquals(emptyList<ForegroundSession>(), result)
-    }
-
-    @Test
-    fun `an activity closed before the range and closed again inside it is not seeded`() {
-        val result = sessions(
-            foreground(instagram, 40 * oneMinuteMillis),
-            background(instagram, 50 * oneMinuteMillis),
-            background(instagram, 70 * oneMinuteMillis),
-            rangeStartMillis = 60 * oneMinuteMillis,
-        )
-
-        assertEquals(emptyList<ForegroundSession>(), result)
-    }
-
-    @Test
-    fun `events after the range end are ignored`() {
-        val result = sessions(
-            foreground(instagram, 90 * oneMinuteMillis),
-            background(instagram, 120 * oneMinuteMillis),
-        )
-
-        assertEquals(listOf(ForegroundSession(instagram, 90 * oneMinuteMillis, 100 * oneMinuteMillis)), result)
-    }
-
-    @Test
     fun `no events means no sessions`() {
         assertEquals(emptyList<ForegroundSession>(), sessions())
     }

@@ -9,11 +9,9 @@ data class ForegroundSession(val packageName: String, val startMillis: Long, val
 /**
  * Turns foreground/background events into sessions, the building block of [ForegroundTimeCalculator].
  *
- * An app is in the foreground while at least one of its activities is. [fromEvents] accepts events from before the
- * range: they are replayed to know which activities were open when the range started, and those start at the range
- * start, so an app opened before midnight and kept on one screen counts from midnight. Without earlier events, an
- * activity whose first in-range event is a background one is taken as open since the range start too (a session
- * older than the queried window). A session still open at the end of the range ends at the range end.
+ * An app is in the foreground while at least one of its activities is. A session that was already open when the
+ * range started (an activity whose first event is a background one) starts at the range start, so one open across
+ * midnight is clipped to the day; a session still open at the end of the range ends at the range end.
  */
 object ForegroundSessions {
 
@@ -31,25 +29,12 @@ object ForegroundSessions {
             if (endMillis > startMillis) sessions += ForegroundSession(packageName, startMillis, endMillis)
         }
 
-        val sortedEvents = events.filter { it.timestampMillis <= rangeEndMillis }.sortedBy { it.timestampMillis }
-        val preRangeEvents = sortedEvents.filter { it.timestampMillis < rangeStartMillis }
-        val inRangeEvents = sortedEvents.filter { it.timestampMillis >= rangeStartMillis }
+        val inRangeEvents = events
+            .filter { it.timestampMillis in rangeStartMillis..rangeEndMillis }
+            .sortedBy { it.timestampMillis }
 
-        // The activities still open at the range start, replayed from the events before it.
+        // An activity whose first in-range event is a background one was already open when the range started.
         val seenActivities = mutableSetOf<Pair<String, String>>()
-        for (event in preRangeEvents) {
-            seenActivities += event.packageName to event.activityName
-            val openActivities = foregroundActivitiesByPackage.getOrPut(event.packageName) { mutableSetOf() }
-            when (event.type) {
-                UsageEventType.MOVED_TO_FOREGROUND -> openActivities += event.activityName
-                UsageEventType.MOVED_TO_BACKGROUND -> openActivities -= event.activityName
-            }
-        }
-        foregroundActivitiesByPackage.forEach { (packageName, openActivities) ->
-            if (openActivities.isNotEmpty()) sessionStartByPackage[packageName] = rangeStartMillis
-        }
-
-        // An activity with no earlier event whose first in-range event is a background one was already open.
         for (event in inRangeEvents) {
             if (!seenActivities.add(event.packageName to event.activityName) ||
                 event.type != UsageEventType.MOVED_TO_BACKGROUND

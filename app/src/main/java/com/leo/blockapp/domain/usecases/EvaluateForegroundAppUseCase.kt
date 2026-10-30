@@ -15,6 +15,7 @@ import com.leo.blockapp.domain.ports.output.Clock
 import com.leo.blockapp.domain.ports.output.UsageEventSource
 import com.leo.blockapp.domain.rules.BlockEvaluator
 import com.leo.blockapp.domain.rules.HoldPolicy
+import com.leo.blockapp.domain.usage.ForegroundSession
 import com.leo.blockapp.domain.usage.ForegroundSessions
 
 /**
@@ -30,9 +31,10 @@ import com.leo.blockapp.domain.usage.ForegroundSessions
  * Per tick the block config is read once, and so are the states before the usage query: when an active hold covers
  * the package the verdict is returned right there, without querying usage (the common case while the user keeps
  * opening a blocked app; orphan garbage collection then waits for the next evaluated tick). Otherwise usage events
- * are fetched before the transaction (the transform cannot suspend), starting one day before the query range so
- * the activities already open at its start (an app opened before midnight and kept on one screen) are counted, and
- * the transaction re-checks the hold. A config edit racing a tick is accepted: the next tick corrects it. Storage
+ * are fetched before the transaction (the transform cannot suspend) and the transaction re-checks the hold. The
+ * caller passes since when the package has been in the foreground: if that is before the query range and the events
+ * show no open session, the package is counted from the range start (an app opened before midnight and kept on one
+ * screen). A config edit racing a tick is accepted: the next tick corrects it. Storage
  * errors propagate so the caller can fail closed.
  *
  * Detection lag: the foreground app is checked every ~5 s, so usage may exceed the limit by about that much before
@@ -45,7 +47,7 @@ class EvaluateForegroundAppUseCase(
     private val clock: Clock,
 ) : EvaluateForegroundApp {
 
-    override suspend fun invoke(packageName: String): ForegroundAppVerdict {
+    override suspend fun invoke(packageName: String, foregroundSinceMillis: Long): ForegroundAppVerdict {
         val nowMillis = clock.nowMillis()
         val startOfDayMillis = clock.startOfDayMillis(nowMillis)
         // DST-safe: 26 h after the start of the day is always inside the next day.
@@ -65,9 +67,14 @@ class EvaluateForegroundAppUseCase(
 
         val sessions = owner?.let {
             val rangeStartMillis = queryStartMillis(it.rule, startOfDayMillis)
-            // Earlier events tell which activities were already open when the range started.
-            val events = usageEventSource.getEvents(rangeStartMillis - OPEN_SESSION_LOOKBACK_MILLIS, nowMillis)
-            ForegroundSessions.fromEvents(events, rangeStartMillis, nowMillis)
+            val events = usageEventSource.getEvents(rangeStartMillis, nowMillis)
+            withOpenSessionSeeded(
+                ForegroundSessions.fromEvents(events, rangeStartMillis, nowMillis),
+                packageName,
+                foregroundSinceMillis,
+                rangeStartMillis,
+                nowMillis,
+            )
         }.orEmpty()
 
         return blockStateRepository.update { states ->
@@ -124,14 +131,32 @@ class EvaluateForegroundAppUseCase(
 
     /**
      * Events from the start of the day, extended back by the inactivity lookback only when it is configured (the
-     * evaluator ignores anything older than a day before the start of the day). With the extra day of earlier events
-     * fetched for open sessions, that bounds the query to 72 h.
+     * evaluator ignores anything older than a day before the start of the day).
      */
     private fun queryStartMillis(rule: BlockRule, startOfDayMillis: Long): Long = when (rule) {
         is BlockRule.AccumulatedUsageWithCooldown -> {
             val lookbackMillis = rule.inactivityResetMinutes?.let { minOf(it * MILLIS_PER_MINUTE, MAX_LOOKBACK_MILLIS) }
             startOfDayMillis - (lookbackMillis ?: 0L)
         }
+    }
+
+    /**
+     * The evaluated package is the current foreground app, so when it came to the foreground before the range and
+     * the in-range events show no session open at [nowMillis] (no event since: one screen kept open across midnight
+     * or the start of the lookback window), it has been in use since the range start. Only the package being
+     * evaluated is seeded, from evidence of this very tick; a stale foreground of any other package is never counted.
+     */
+    private fun withOpenSessionSeeded(
+        sessions: List<ForegroundSession>,
+        packageName: String,
+        foregroundSinceMillis: Long,
+        rangeStartMillis: Long,
+        nowMillis: Long,
+    ): List<ForegroundSession> {
+        if (foregroundSinceMillis >= rangeStartMillis) return sessions
+        val openAtNow = sessions.any { it.packageName == packageName && it.endMillis >= nowMillis }
+        if (openAtNow) return sessions
+        return (sessions + ForegroundSession(packageName, rangeStartMillis, nowMillis)).sortedBy { it.startMillis }
     }
 
     /** States of blocks that no longer exist, hold nothing and are from a previous day. */
@@ -152,7 +177,6 @@ class EvaluateForegroundAppUseCase(
     }
 
     private companion object {
-        const val OPEN_SESSION_LOOKBACK_MILLIS = 24 * 60 * 60_000L
         const val MILLIS_PER_MINUTE = 60_000L
         const val MAX_LOOKBACK_MILLIS = 24 * 60 * MILLIS_PER_MINUTE
         const val NEXT_DAY_PROBE_MILLIS = 26 * 60 * MILLIS_PER_MINUTE

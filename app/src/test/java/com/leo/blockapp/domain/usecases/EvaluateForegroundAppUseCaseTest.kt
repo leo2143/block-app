@@ -101,7 +101,8 @@ class EvaluateForegroundAppUseCaseTest {
         val usage = FakeUsageEventSource(events)
         val evaluateForegroundApp = EvaluateForegroundAppUseCase(blockRepository, stateRepository, usage, clock)
 
-        suspend fun evaluate(packageName: String) = evaluateForegroundApp(packageName)
+        suspend fun evaluate(packageName: String, foregroundSinceMillis: Long = now) =
+            evaluateForegroundApp(packageName, foregroundSinceMillis)
 
         suspend fun storedStates() = stateRepository.observeStates().first()
     }
@@ -488,7 +489,7 @@ class EvaluateForegroundAppUseCaseTest {
         val stateRepository = FakeBlockStateRepository()
         val usage = FakeUsageEventSource(listOf(foregroundSince(instagram, 4)))
 
-        val verdict = EvaluateForegroundAppUseCase(blockRepository, stateRepository, usage, clock)(instagram)
+        val verdict = EvaluateForegroundAppUseCase(blockRepository, stateRepository, usage, clock)(instagram, now)
 
         assertEquals(ForegroundAppVerdict.Allowed("B1", 6 * minute), verdict)
         assertEquals(1, blockRepository.reads)
@@ -519,14 +520,11 @@ class EvaluateForegroundAppUseCaseTest {
     }
 
     @Test
-    fun `an app opened before midnight and kept on one screen counts from midnight`() = runTest {
+    fun `an app in the foreground since before midnight with no events in range counts from midnight`() = runTest {
         clock.nowMillis = startOfToday + 30 * minute
-        val harness = Harness(
-            blocks = listOf(block("B1", instagram)),
-            events = listOf(UsageEvent(instagram, "Main", UsageEventType.MOVED_TO_FOREGROUND, startOfToday - 2 * minute)),
-        )
+        val harness = Harness(blocks = listOf(block("B1", instagram)))
 
-        val verdict = harness.evaluate(instagram)
+        val verdict = harness.evaluate(instagram, foregroundSinceMillis = startOfToday - 2 * minute)
 
         assertEquals(
             ForegroundAppVerdict.Restricted("B1", startOfToday + 90 * minute, BlockReason.COOLDOWN),
@@ -535,14 +533,35 @@ class EvaluateForegroundAppUseCaseTest {
     }
 
     @Test
-    fun `an app opened before the inactivity lookback and still open counts from the start of the window`() = runTest {
-        val rule = defaultRule.copy(inactivityResetMinutes = 60)
+    fun `another package with a stale foreground before the range and no background contributes no usage`() = runTest {
         val harness = Harness(
-            blocks = listOf(block("B1", instagram, rule = rule)),
-            events = listOf(foregroundSince(instagram, 12 * 60 + 90)),
+            blocks = listOf(block("B1", instagram, x)),
+            events = listOf(
+                UsageEvent(x, "Main", UsageEventType.MOVED_TO_FOREGROUND, startOfToday - 2 * minute),
+                foregroundSince(instagram, 4),
+            ),
         )
 
-        val verdict = harness.evaluate(instagram)
+        val verdict = harness.evaluate(instagram, foregroundSinceMillis = now - 4 * minute)
+
+        assertEquals(ForegroundAppVerdict.Allowed("B1", 6 * minute), verdict)
+    }
+
+    @Test
+    fun `an app just opened whose foreground event is not visible yet adds no usage`() = runTest {
+        val harness = Harness(blocks = listOf(block("B1", instagram)))
+
+        val verdict = harness.evaluate(instagram, foregroundSinceMillis = now)
+
+        assertEquals(ForegroundAppVerdict.Allowed("B1", 10 * minute), verdict)
+    }
+
+    @Test
+    fun `an app in the foreground since before the inactivity lookback counts from the start of the window`() = runTest {
+        val rule = defaultRule.copy(inactivityResetMinutes = 60)
+        val harness = Harness(blocks = listOf(block("B1", instagram, rule = rule)))
+
+        val verdict = harness.evaluate(instagram, foregroundSinceMillis = now - (12 * 60 + 90) * minute)
 
         assertEquals(
             ForegroundAppVerdict.Restricted("B1", now + 60 * minute, BlockReason.COOLDOWN),
@@ -551,34 +570,34 @@ class EvaluateForegroundAppUseCaseTest {
     }
 
     @Test
-    fun `the query reaches back a day before the start of the day and ends now`() = runTest {
+    fun `the query window starts at the start of the day and ends now`() = runTest {
         val harness = Harness(blocks = listOf(block("B1", instagram)))
 
         harness.evaluate(instagram)
 
-        assertEquals(listOf((startOfToday - day) to now), harness.usage.requests)
+        assertEquals(listOf(startOfToday to now), harness.usage.requests)
     }
 
     @Test
-    fun `with an inactivity window the query reaches back by it plus a day`() = runTest {
+    fun `with an inactivity window the query reaches back by it`() = runTest {
         val rule = defaultRule.copy(inactivityResetMinutes = 60)
         val harness = Harness(blocks = listOf(block("B1", instagram, rule = rule)))
 
         harness.evaluate(instagram)
 
-        assertEquals(listOf((startOfToday - 60 * minute - day) to now), harness.usage.requests)
+        assertEquals(listOf((startOfToday - 60 * minute) to now), harness.usage.requests)
     }
 
     @Test
-    fun `a long inactivity window is bounded to two days before the start of the day`() = runTest {
+    fun `a long inactivity window is bounded to one day before the start of the day`() = runTest {
         val rule = defaultRule.copy(inactivityResetMinutes = 50 * 60)
         val harness = Harness(blocks = listOf(block("B1", instagram, rule = rule)))
 
         harness.evaluate(instagram)
 
         val (from, to) = harness.usage.requests.single()
-        assertEquals(startOfToday - 2 * day, from)
-        assertTrue(to - from <= 3 * day)
+        assertEquals(startOfToday - day, from)
+        assertTrue(to - from <= 2 * day)
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.leo.blockapp.domain.usecases
 
 import com.leo.blockapp.domain.fakes.FakeClock
 import com.leo.blockapp.domain.fakes.FakeUsageEventSource
+import com.leo.blockapp.domain.model.ForegroundApp
 import com.leo.blockapp.domain.model.UsageEvent
 import com.leo.blockapp.domain.model.UsageEventType
 import kotlinx.coroutines.test.runTest
@@ -46,7 +47,7 @@ class GetForegroundPackageUseCaseTest {
             foreground(instagram, 20),
         )
 
-        assertEquals(instagram, useCase())
+        assertEquals(ForegroundApp(instagram, now - 20 * minute), useCase())
     }
 
     @Test
@@ -60,7 +61,7 @@ class GetForegroundPackageUseCaseTest {
     fun `the latest foreground wins when two packages are open`() = runTest {
         val (useCase, _) = useCaseWith(foreground(launcher, 20), foreground(instagram, 10))
 
-        assertEquals(instagram, useCase())
+        assertEquals(ForegroundApp(instagram, now - 10 * minute), useCase())
     }
 
     @Test
@@ -71,34 +72,42 @@ class GetForegroundPackageUseCaseTest {
             background(instagram, 9, activity = "Feed"),
         )
 
-        assertEquals(instagram, useCase())
+        assertEquals(instagram, useCase()?.packageName)
+    }
+
+    @Test
+    fun `the foreground since is the opening event of the latest open activity`() = runTest {
+        val (useCase, _) = useCaseWith(
+            foreground(instagram, 20, activity = "Feed"),
+            foreground(instagram, 10, activity = "Reels"),
+            background(instagram, 9, activity = "Feed"),
+        )
+
+        assertEquals(now - 10 * minute, useCase()?.foregroundSinceMillis)
     }
 
     @Test
     fun `an app open since yesterday is still found`() = runTest {
         val (useCase, source) = useCaseWith(foreground(instagram, 12 * 60 + 30))
 
-        assertEquals(instagram, useCase())
-        assertEquals(
-            listOf((now - 10 * minute) to now, (now - 120 * minute) to now, (startOfToday - day) to now),
-            source.requests,
-        )
+        assertEquals(ForegroundApp(instagram, now - (12 * 60 + 30) * minute), useCase())
+        assertEquals(listOf((now - 10 * minute) to now, (startOfToday - day) to now), source.requests)
     }
 
     @Test
     fun `a recent switch is answered from the first 10 minute window with one query`() = runTest {
         val (useCase, source) = useCaseWith(foreground(launcher, 30), foreground(instagram, 2))
 
-        assertEquals(instagram, useCase())
+        assertEquals(instagram, useCase()?.packageName)
         assertEquals(listOf((now - 10 * minute) to now), source.requests)
     }
 
     @Test
-    fun `an app open for an hour with no recent events is found by widening to two hours`() = runTest {
-        val (useCase, source) = useCaseWith(foreground(instagram, 60))
+    fun `nothing open costs two queries, the recent window and the full one`() = runTest {
+        val (useCase, source) = useCaseWith()
 
-        assertEquals(instagram, useCase())
-        assertEquals(listOf((now - 10 * minute) to now, (now - 120 * minute) to now), source.requests)
+        assertNull(useCase())
+        assertEquals(listOf((now - 10 * minute) to now, (startOfToday - day) to now), source.requests)
     }
 
     @Test
@@ -106,7 +115,7 @@ class GetForegroundPackageUseCaseTest {
         val (useCase, source) = useCaseWith(foreground(instagram, 12 * 60 + 24 * 60 + 1))
 
         assertNull(useCase())
-        assertEquals(3, source.requests.size)
+        assertEquals(2, source.requests.size)
     }
 
     @Test
@@ -117,13 +126,13 @@ class GetForegroundPackageUseCaseTest {
             background(launcher, 5),
         )
 
-        assertEquals(instagram, useCase())
+        assertEquals(instagram, useCase()?.packageName)
     }
 
     @Test
     fun `events are sorted by time before they are read`() = runTest {
         val (useCase, _) = useCaseWith(background(instagram, 5), foreground(launcher, 3), foreground(instagram, 10))
 
-        assertEquals(launcher, useCase())
+        assertEquals(launcher, useCase()?.packageName)
     }
 }
