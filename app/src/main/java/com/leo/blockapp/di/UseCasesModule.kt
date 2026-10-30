@@ -2,6 +2,7 @@ package com.leo.blockapp.di
 
 import com.leo.blockapp.domain.ports.input.DeleteBlock
 import com.leo.blockapp.domain.ports.input.EvaluateForegroundApp
+import com.leo.blockapp.domain.ports.input.GetAppBlockingStatus
 import com.leo.blockapp.domain.ports.input.GetBlock
 import com.leo.blockapp.domain.ports.input.GetForegroundPackage
 import com.leo.blockapp.domain.ports.input.GetTodayUsage
@@ -21,6 +22,7 @@ import com.leo.blockapp.domain.ports.output.SystemPermissions
 import com.leo.blockapp.domain.ports.output.UsageEventSource
 import com.leo.blockapp.domain.usecases.DeleteBlockUseCase
 import com.leo.blockapp.domain.usecases.EvaluateForegroundAppUseCase
+import com.leo.blockapp.domain.usecases.GetAppBlockingStatusUseCase
 import com.leo.blockapp.domain.usecases.GetBlockUseCase
 import com.leo.blockapp.domain.usecases.GetForegroundPackageUseCase
 import com.leo.blockapp.domain.usecases.GetTodayUsageUseCase
@@ -110,4 +112,11 @@ object UseCasesModule {
         usageEventSource: UsageEventSource,
         clock: Clock,
     ): GetForegroundPackage = GetForegroundPackageUseCase(usageEventSource, clock)
+
+    @Provides
+    fun provideGetAppBlockingStatus(
+        blockRepository: BlockRepository,
+        blockStateRepository: BlockStateRepository,
+        clock: Clock,
+    ): GetAppBlockingStatus = GetAppBlockingStatusUseCase(blockRepository, blockStateRepository, clock)
 }
