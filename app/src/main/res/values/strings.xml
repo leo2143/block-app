@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Block App</string>
+    <string name="accessibility_service_label">Block App</string>
+    <string name="accessibility_service_description">Lee solo qué aplicaciones tienen ventanas en pantalla (el nombre de su paquete) para poder aplicar tus bloqueos. Nunca lee textos, contenido ni lo que escribes.</string>
 </resources>

@@ -11,6 +11,7 @@ import com.leo.blockapp.domain.ports.input.SaveBlock
 import com.leo.blockapp.domain.ports.output.BlockChanges
 import com.leo.blockapp.domain.ports.output.BlockRepository
 import com.leo.blockapp.domain.ports.output.BlockUpdate
+import com.leo.blockapp.domain.ports.output.Clock
 import com.leo.blockapp.domain.ports.output.IdGenerator
 import com.leo.blockapp.domain.ports.output.InstalledAppCatalog
 
@@ -25,6 +26,7 @@ class SaveBlockUseCase(
     private val blockRepository: BlockRepository,
     private val idGenerator: IdGenerator,
     private val installedAppCatalog: InstalledAppCatalog,
+    private val clock: Clock,
 ) : SaveBlock {
 
     override suspend fun invoke(draft: BlockDraft, confirmedMovePackages: Set<String>): SaveBlockResult {
@@ -69,6 +71,9 @@ class SaveBlockUseCase(
         if (conflicts.isNotEmpty()) return rejected(SaveBlockResult.AppsInOtherBlocks(conflicts))
 
         val existing = currentBlocks.firstOrNull { it.id == draft.id }
+        val addedToTarget = draft.packageNames - (existing?.packageNames ?: emptySet())
+        val removedFromTarget = (existing?.packageNames ?: emptySet()) - draft.packageNames
+        val savedAtMillis = clock.nowMillis()
         val target = Block(
             id = existing?.id ?: draft.id ?: idGenerator.newId(),
             name = draft.name.trim(),
@@ -76,6 +81,8 @@ class SaveBlockUseCase(
             rule = draft.rule,
             position = existing?.position ?: nextPosition(currentBlocks),
             enabled = existing?.enabled ?: true,
+            joinedAtMillisByPackage = (existing?.joinedAtMillisByPackage.orEmpty() - removedFromTarget) +
+                addedToTarget.associateWith { savedAtMillis },
         )
 
         val emptiedSourceIds = packagesMovingBySourceId
@@ -85,11 +92,12 @@ class SaveBlockUseCase(
             .filterKeys { it !in emptiedSourceIds }
             .map { (sourceId, moving) ->
                 val source = sourcesById.getValue(sourceId)
-                source.copy(packageNames = source.packageNames - moving)
+                source.copy(
+                    packageNames = source.packageNames - moving,
+                    joinedAtMillisByPackage = source.joinedAtMillisByPackage - moving,
+                )
             }
 
-        val addedToTarget = draft.packageNames - (existing?.packageNames ?: emptySet())
-        val removedFromTarget = (existing?.packageNames ?: emptySet()) - draft.packageNames
         val summary = BlockChangeSummary(
             affectedBlockIds = setOf(target.id) + packagesMovingBySourceId.keys,
             emptiedBlockIds = emptiedSourceIds,

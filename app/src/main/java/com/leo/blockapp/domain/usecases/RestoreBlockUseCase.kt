@@ -57,7 +57,10 @@ class RestoreBlockUseCase(
             return BlockUpdate(BlockChanges(), RestoreBlockResult.NotRestored(skippedApps))
         }
 
-        val restored = block.copy(packageNames = freePackageNames)
+        val restored = block.copy(
+            packageNames = freePackageNames,
+            joinedAtMillisByPackage = block.joinedAtMillisByPackage.filterKeys { it in freePackageNames },
+        )
         val summary = BlockChangeSummary(
             affectedBlockIds = setOf(block.id),
             emptiedBlockIds = emptySet(),

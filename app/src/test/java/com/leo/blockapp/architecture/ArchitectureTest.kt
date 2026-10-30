@@ -11,6 +11,8 @@ class ArchitectureTest {
 
     private val domainDirectory = File("src/main/java/com/leo/blockapp/domain")
     private val inputAdaptersDirectory = File("src/main/java/com/leo/blockapp/adapters/input")
+    private val serviceDirectory = File("src/main/java/com/leo/blockapp/adapters/input/service")
+    private val enforcerDirectory = File("src/main/java/com/leo/blockapp/adapters/input/service/enforcer")
 
     private val forbiddenDomainPackages = listOf("android", "androidx", "dagger", "javax.inject")
 
@@ -28,6 +30,9 @@ class ArchitectureTest {
         "com.leo.blockapp.domain.blocks.BlockValidator",
         "com.leo.blockapp.domain.usage.UsageCalculator",
         "com.leo.blockapp.domain.ports.output.BlockRepository",
+        "com.leo.blockapp.domain.ports.output.BlockStateRepository",
+        "com.leo.blockapp.domain.rules.HoldPolicy",
+        "com.leo.blockapp.domain.rules.BlockEvaluator",
         "com.leo.blockapp.adapters.output.RoomBlockRepository",
         "com.leo.blockapp.domain.future.NewThing",
         "com.leo.blockapp.di.AppModule",
@@ -39,12 +44,128 @@ class ArchitectureTest {
         "com.leo.blockapp.*",
     )
 
+    /**
+     * The domain gets "now" from the Clock port, never from the system. Any `<java.time type>.now` is flagged,
+     * including `now(clock)`: the domain must use the Clock port instead.
+     */
+    private val forbiddenDomainClockReads = listOf(
+        Regex("""(^|[^\w])System\s*\.\s*currentTimeMillis\b"""),
+        Regex("""(^|[^\w])System\s*\.\s*nanoTime\b"""),
+        Regex(
+            """(^|[^\w])(Instant|LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)""" +
+                """\s*(\.|::)\s*now\b""",
+        ),
+        Regex("""(^|[^\w])Clock\s*\.\s*(?i:system)\w*"""),
+        Regex("""(^|[^\w])Calendar\s*\.\s*getInstance\s*\("""),
+        Regex("""(^|[^\w])GregorianCalendar\b"""),
+        Regex("""(^|[^\w])TimeSource\b"""),
+        Regex("""(^|[^\w])java\.util\.Date\b"""),
+        Regex("""^\s*import\s+java\.util\.\*"""),
+    )
+
     /** Any `com.leo.blockapp.` reference (import or fully qualified) that is not in the allowlist. */
     private val inputAdapterRules = listOf(
         Regex(
             """(^|[^\w.])com\.leo\.blockapp\.(?!(${allowedInputAdapterPackages.joinToString("|") { Regex.escape(it.removePrefix("com.leo.blockapp.")) }})\b)""",
         ),
     )
+
+    /** The service adapter and the UI are separate input adapters: the service never reaches into the UI. */
+    private val serviceToUiReferences = listOf(
+        Regex("""(^|[^\w.])com\.leo\.blockapp\.adapters\.input\.ui\b"""),
+    )
+
+    /**
+     * The enforcer is the service's policy and must stay plain Kotlin: it may only use the input ports, the domain
+     * model and its own package. Anything else under `com.leo.blockapp.` (output ports, use cases, rules, the UI,
+     * the Android glue next to it) and every Android or Hilt package is a violation.
+     */
+    private val enforcerRules = listOf(
+        Regex(
+            """(^|[^\w.])com\.leo\.blockapp\.(?!(domain\.model|domain\.ports\.input|adapters\.input\.service\.enforcer)\b)""",
+        ),
+        importOf("android"),
+        importOf("androidx"),
+        importOf("dagger"),
+        importOf("javax.inject"),
+    )
+
+    @Test
+    fun `service does not reference the ui`() {
+        val violations = findViolations(serviceDirectory, serviceToUiReferences)
+
+        assertTrue(
+            "The accessibility service must not reference adapters.input.ui:\n" + violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `enforcer only uses input ports and the domain model`() {
+        val violations = findViolations(enforcerDirectory, enforcerRules)
+
+        assertTrue(
+            "The enforcer may only use domain.model, domain.ports.input and its own package:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `service scanner reports ui references`() {
+        val violations = scanWith(
+            "import com.leo.blockapp.adapters.input.ui.blocks.BlocksListScreen\n" +
+                "val screen = com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme\n" +
+                "import com.leo.blockapp.adapters.input.service.enforcer.ForegroundEnforcer\n" +
+                "import com.leo.blockapp.adapters.input.uix.Fake\n",
+            serviceToUiReferences,
+        )
+
+        assertEquals(
+            listOf(
+                "Leaky.kt: import com.leo.blockapp.adapters.input.ui.blocks.BlocksListScreen",
+                "Leaky.kt: val screen = com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme",
+            ),
+            violations,
+        )
+    }
+
+    @Test
+    fun `enforcer scanner reports everything but input ports and the domain model`() {
+        val lines = listOf(
+            "import com.leo.blockapp.domain.ports.output.Clock",
+            "import com.leo.blockapp.domain.ports.output.UsageEventSource",
+            "import com.leo.blockapp.domain.usecases.EvaluateForegroundAppUseCase",
+            "import com.leo.blockapp.domain.rules.HoldPolicy",
+            "import com.leo.blockapp.domain.usage.ForegroundSessions",
+            "import com.leo.blockapp.adapters.input.ui.blocks.BlocksListScreen",
+            "import com.leo.blockapp.adapters.input.service.ForegroundAppAccessibilityService",
+            "import com.leo.blockapp.di.UseCasesModule",
+            "import com.leo.blockapp.R",
+            "import android.content.Context",
+            "import androidx.core.content.ContextCompat",
+            "import dagger.hilt.android.AndroidEntryPoint",
+            "import javax.inject.Inject",
+        )
+
+        assertEquals(lines.map { "Leaky.kt: $it" }, scanWith(lines.joinToString("\n") + "\n", enforcerRules))
+    }
+
+    @Test
+    fun `enforcer scanner accepts input ports, the domain model and its own package`() {
+        val violations = scanWith(
+            "package com.leo.blockapp.adapters.input.service.enforcer\n\n" +
+                "import com.leo.blockapp.domain.model.ForegroundApp\n" +
+                "import com.leo.blockapp.domain.model.ForegroundAppVerdict\n" +
+                "import com.leo.blockapp.domain.ports.input.EvaluateForegroundApp\n" +
+                "import com.leo.blockapp.adapters.input.service.enforcer.ForegroundFilter\n" +
+                "import kotlinx.coroutines.CoroutineScope\n" +
+                "val own = com.leo.blockapp.domain.model.ForegroundApp(\"a\", 1)\n",
+            enforcerRules,
+        )
+
+        assertEquals(emptyList<String>(), violations)
+    }
 
     @Test
     fun `domain does not import Android or Hilt`() {
@@ -61,6 +182,105 @@ class ArchitectureTest {
             "The domain must not depend on serialization (storage adapters own it):\n" +
                 violations.joinToString("\n"),
             violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `domain does not read the system clock`() {
+        val violations = findViolations(domainDirectory, forbiddenDomainClockReads)
+
+        assertTrue(
+            "The domain must read time through the Clock port:\n" + violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `clock scanner reports direct system clock reads`() {
+        val violations = scanWith(
+            "val now = System.currentTimeMillis()\nval fq = java.lang.System.currentTimeMillis()\nval t = System.nanoTime()\n",
+            forbiddenDomainClockReads,
+        )
+
+        assertEquals(
+            listOf(
+                "Leaky.kt: val now = System.currentTimeMillis()",
+                "Leaky.kt: val fq = java.lang.System.currentTimeMillis()",
+                "Leaky.kt: val t = System.nanoTime()",
+            ),
+            violations,
+        )
+    }
+
+    @Test
+    fun `clock scanner reports java time and legacy clock reads`() {
+        val lines = listOf(
+            "val a = Instant.now()",
+            "val b = LocalDate.now()",
+            "val c = LocalDateTime.now()",
+            "val d = ZonedDateTime.now()",
+            "val e = Clock.systemUTC()",
+            "val f = Calendar.getInstance()",
+            "import java.util.Date",
+            "val g = Clock.System.now()",
+            "val h = LocalTime.now()",
+            "val i = OffsetDateTime.now()",
+            "val j = Year.now()",
+            "val k = YearMonth.now()",
+            "val l = Instant::now",
+            "val m = ZonedDateTime.now(clock)",
+            "val n = GregorianCalendar()",
+            "val o = TimeSource.Monotonic.markNow()",
+            "import java.util.*",
+        )
+
+        assertEquals(lines.map { "Leaky.kt: $it" }, scanWith(lines.joinToString("\n") + "\n", forbiddenDomainClockReads))
+    }
+
+    @Test
+    fun `clock scanner ignores the Clock port and comments`() {
+        val violations = scanWith(
+            "// System.currentTimeMillis() is forbidden\nval now = clock.nowMillis()\nval s = MySystem.currentTimeMillisX()\n",
+            forbiddenDomainClockReads,
+        )
+
+        assertEquals(emptyList<String>(), violations)
+    }
+
+    @Test
+    fun `clock scanner ignores look-alikes that are not clock reads`() {
+        val lines = listOf(
+            "val a = MyYear.now()",
+            "val b = TimeSourceX()",
+            "val c = systemClock.nowMillis()",
+            "val d = clock.systemDefault()",
+            "val e = Clock.fixed(instant, zone)",
+            "val f = MySystem.currentTimeMillis()",
+            "val g = LocalDateTimeFormatter.now()",
+            "val h = CalendarX.getInstance()",
+            "val i = java.util.DateX()",
+            "import java.util.concurrent.TimeUnit",
+        )
+
+        assertEquals(emptyList<String>(), scanWith(lines.joinToString("\n") + "\n", forbiddenDomainClockReads))
+    }
+
+    @Test
+    fun `domain scanner reports android and dagger imports`() {
+        val violations = scanWith(
+            "import android.content.Context\nimport androidx.compose.runtime.Composable\n" +
+                "import dagger.Module\nimport javax.inject.Inject\nimport kotlin.math.max\n",
+            forbiddenDomainPackages.map(::importOf),
+        )
+
+        assertEquals(
+            listOf(
+                "Leaky.kt: import android.content.Context",
+                "Leaky.kt: import androidx.compose.runtime.Composable",
+                "Leaky.kt: import dagger.Module",
+                "Leaky.kt: import javax.inject.Inject",
+            ),
+            violations,
         )
     }
 
@@ -171,11 +391,13 @@ class ArchitectureTest {
         }
     }
 
-    private fun scan(source: String): List<String> {
+    private fun scan(source: String): List<String> = scanWith(source, listOf(anyUseOf("kotlinx.serialization")))
+
+    private fun scanWith(source: String, forbidden: List<Regex>): List<String> {
         val scratchDirectory = createTempDirectory(prefix = "architecture-scan").toFile()
         try {
             File(scratchDirectory, "Leaky.kt").writeText(source)
-            return findViolations(scratchDirectory, listOf(anyUseOf("kotlinx.serialization")))
+            return findViolations(scratchDirectory, forbidden)
         } finally {
             scratchDirectory.deleteRecursively()
         }

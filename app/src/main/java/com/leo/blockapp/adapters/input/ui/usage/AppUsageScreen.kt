@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.leo.blockapp.adapters.input.ui.permissions.AccessibilityRequiredCard
 import com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme
 import com.leo.blockapp.domain.model.AppUsage
 import com.leo.blockapp.domain.model.InstalledApp
@@ -35,6 +37,7 @@ import com.leo.blockapp.domain.model.InstalledApp
 @Composable
 fun AppUsageScreen(snackbarHost: @Composable () -> Unit, viewModel: AppUsageViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val accessibilityEnabled by viewModel.accessibilityEnabled.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Refresh every time the screen comes back to the foreground, e.g. when returning from Settings.
@@ -45,6 +48,7 @@ fun AppUsageScreen(snackbarHost: @Composable () -> Unit, viewModel: AppUsageView
 
     AppUsageContent(
         uiState = uiState,
+        accessibilityEnabled = accessibilityEnabled,
         snackbarHost = snackbarHost,
         onOpenUsageAccessSettings = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
     )
@@ -54,6 +58,7 @@ fun AppUsageScreen(snackbarHost: @Composable () -> Unit, viewModel: AppUsageView
 @Composable
 private fun AppUsageContent(
     uiState: AppUsageUiState,
+    accessibilityEnabled: Boolean,
     onOpenUsageAccessSettings: () -> Unit,
     snackbarHost: @Composable () -> Unit = {},
 ) {
@@ -61,14 +66,17 @@ private fun AppUsageContent(
         topBar = { TopAppBar(title = { Text("Uso de hoy") }) },
         snackbarHost = snackbarHost,
     ) { innerPadding ->
-        Box(Modifier.fillMaxSize().padding(innerPadding)) {
-            when (uiState) {
-                AppUsageUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                AppUsageUiState.MissingUsageAccess -> UsageAccessRequest(
-                    onOpenUsageAccessSettings = onOpenUsageAccessSettings,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-                is AppUsageUiState.Loaded -> AppUsageList(uiState.appUsages)
+        Column(Modifier.fillMaxSize().padding(innerPadding)) {
+            if (!accessibilityEnabled) AccessibilityRequiredCard(Modifier.padding(16.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when (uiState) {
+                    AppUsageUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    AppUsageUiState.MissingUsageAccess -> UsageAccessRequest(
+                        onOpenUsageAccessSettings = onOpenUsageAccessSettings,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    is AppUsageUiState.Loaded -> AppUsageList(uiState.appUsages)
+                }
             }
         }
     }
@@ -125,6 +133,7 @@ private fun AppUsageListPreview() {
                     AppUsage(InstalledApp("com.whatsapp", "WhatsApp"), 0L),
                 ),
             ),
+            accessibilityEnabled = true,
             onOpenUsageAccessSettings = {},
         )
     }
@@ -134,6 +143,10 @@ private fun AppUsageListPreview() {
 @Composable
 private fun UsageAccessRequestPreview() {
     BlockAppTheme {
-        AppUsageContent(uiState = AppUsageUiState.MissingUsageAccess, onOpenUsageAccessSettings = {})
+        AppUsageContent(
+            uiState = AppUsageUiState.MissingUsageAccess,
+            accessibilityEnabled = false,
+            onOpenUsageAccessSettings = {},
+        )
     }
 }

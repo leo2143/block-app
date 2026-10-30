@@ -10,15 +10,22 @@ import com.leo.blockapp.domain.model.BlockViolation
 import com.leo.blockapp.domain.model.SaveBlockResult
 import com.leo.blockapp.domain.ports.input.GetBlock
 import com.leo.blockapp.domain.ports.input.ListSelectableApps
+import com.leo.blockapp.domain.ports.input.ObserveBlockStatuses
 import com.leo.blockapp.domain.ports.input.SaveBlock
 import com.leo.blockapp.domain.ports.input.ValidateBlock
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import java.io.IOException
 import javax.inject.Inject
@@ -39,6 +46,7 @@ class BlockEditorViewModel @Inject constructor(
     private val listSelectableApps: ListSelectableApps,
     private val validateBlock: ValidateBlock,
     private val saveBlock: SaveBlock,
+    private val observeBlockStatuses: ObserveBlockStatuses,
 ) : ViewModel() {
 
     private val blockId: String? = savedStateHandle.get<String>(KEY_BLOCK_ID)
@@ -55,8 +63,40 @@ class BlockEditorViewModel @Inject constructor(
     /** Violations reported by SaveBlock itself (race / safety net). Cleared by the next edit. */
     private var domainViolations: Set<BlockViolation> = emptySet()
 
+    /** The cap the block had when the editor opened; null for a new block or one without a cap. */
+    private var openedCap: Int? = null
+
+    /** True while the edited block is held by its daily cap (from the status port). */
+    private var capHoldActive = false
+
     init {
         viewModelScope.launch { open() }
+        if (blockId != null) viewModelScope.launch { followCapHoldWhileObserved(blockId) }
+    }
+
+    /**
+     * Follows the block status only while the screen observes [uiState] (plus a grace period for rotation), like
+     * `stateIn(WhileSubscribed)` does: a hidden editor must not keep the domain wake-up timer and recomputes alive.
+     * The state itself stays a plain [MutableStateFlow] so edits are visible synchronously.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun followCapHoldWhileObserved(id: String) {
+        _uiState.subscriptionCount
+            .map { it > 0 }
+            .distinctUntilChanged()
+            .transformLatest { observed ->
+                if (!observed) delay(STOP_TIMEOUT_MILLIS)
+                emit(observed)
+            }
+            .distinctUntilChanged()
+            .collectLatest { observed -> if (observed) followCapHold(id) }
+    }
+
+    private suspend fun followCapHold(id: String) {
+        observeBlockStatuses().collect { statuses ->
+            capHoldActive = statuses[id]?.dailyCapPending == true
+            ready()?.let { _uiState.value = recomputed(it) }
+        }
     }
 
     // region Form changes
@@ -179,6 +219,7 @@ class BlockEditorViewModel @Inject constructor(
             }
         }
         val apps = listSelectableApps(blockId)
+        openedCap = (block?.rule as? BlockRule.AccumulatedUsageWithCooldown)?.dailyCycleCap
         val opened = if (block != null) readyFrom(block) else newEditorState()
         val withApps = opened.copy(apps = apps)
         initialSnapshot = snapshotOf(recomputed(withApps))
@@ -295,7 +336,18 @@ class BlockEditorViewModel @Inject constructor(
         )
         val live = liveViolations(named)
         val visibleLive = if (named.submitAttempted) live else live.filterTo(mutableSetOf()) { it.field() in named.touchedFields }
-        return named.copy(visibleViolations = visibleLive + domainViolations)
+        return named.copy(
+            visibleViolations = visibleLive + domainViolations,
+            capChangeAppliesTomorrow = capChangeAppliesTomorrow(named),
+        )
+    }
+
+    private fun capChangeAppliesTomorrow(state: BlockEditorUiState.Ready): Boolean {
+        val savedCap = openedCap
+        if (!capHoldActive || savedCap == null) return false
+        if (!state.capEnabled) return true
+        val formCap = state.cap.value ?: return false
+        return formCap > savedCap
     }
 
     private fun liveViolations(state: BlockEditorUiState.Ready): Set<BlockViolation> {
@@ -364,6 +416,9 @@ class BlockEditorViewModel @Inject constructor(
     // endregion
 
     internal companion object {
+        /** How long the status feed outlives the last observer of the state (configuration changes). */
+        const val STOP_TIMEOUT_MILLIS = 5_000L
+
         const val KEY_BLOCK_ID = "blockId"
         const val KEY_NAME = "draft.name"
         const val KEY_NAME_EDITED = "draft.nameEditedByUser"
@@ -377,6 +432,7 @@ class BlockEditorViewModel @Inject constructor(
         const val KEY_INACTIVITY = "draft.inactivity"
 
         const val BLOCK_GONE = "Este bloqueo ya no existe"
+        const val CAP_APPLIES_TOMORROW_HINT = "Se aplica desde mañana"
 
         private const val DEFAULT_LIMIT_MINUTES = 10
         private const val DEFAULT_COOLDOWN_MINUTES = 60

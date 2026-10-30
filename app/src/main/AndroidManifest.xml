@@ -7,11 +7,21 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Desde Android 11 hay que declarar qué apps queremos ver: aquí, todas las que aparecen en el launcher. -->
+    <!-- Desde Android 11 hay que declarar qué apps queremos ver. -->
     <queries>
+        <!-- Las apps que aparecen en el launcher (lista de apps y "tiene icono"). -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Los launchers instalados: ir a inicio no es abrir una app. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <!-- Los teclados: nunca cuentan como "el usuario cambió de app". -->
+        <intent>
+            <action android:name="android.view.InputMethod" />
         </intent>
     </queries>
 
@@ -29,5 +39,35 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            Pantalla de bloqueo: sin exportar, en su propia tarea y fuera de recientes. La acción es la de
+            res/values/block_screen_contract.xml, la misma que usa el servicio de accesibilidad para abrirla.
+        -->
+        <activity
+            android:name=".adapters.input.ui.blocking.BlockingActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.leo.blockapp.blocking">
+            <intent-filter>
+                <action android:name="@string/action_show_block_screen" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- El sistema se enlaza al servicio, por eso va exportado y protegido con BIND_ACCESSIBILITY_SERVICE. -->
+        <service
+            android:name=".adapters.input.service.ForegroundAppAccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
     </application>
 </manifest>

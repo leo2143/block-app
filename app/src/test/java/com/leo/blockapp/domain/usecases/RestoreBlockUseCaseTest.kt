@@ -1,6 +1,7 @@
 package com.leo.blockapp.domain.usecases
 
 import com.leo.blockapp.domain.fakes.FakeBlockRepository
+import com.leo.blockapp.domain.fakes.FakeClock
 import com.leo.blockapp.domain.fakes.FakeIdGenerator
 import com.leo.blockapp.domain.fakes.FakeInstalledAppCatalog
 import com.leo.blockapp.domain.model.Block
@@ -258,7 +259,7 @@ class RestoreBlockUseCaseTest {
 
         val deletedFirst = deleteBlock("B1")!!
         val deletedMiddle = deleteBlock("B2")!!
-        SaveBlockUseCase(repository, FakeIdGenerator(), catalog)(
+        SaveBlockUseCase(repository, FakeIdGenerator(), catalog, FakeClock())(
             BlockDraft(null, "Nuevo", linkedSetOf("com.new.app"), richRule),
         )
         restoreBlock(deletedMiddle)
@@ -290,7 +291,7 @@ class RestoreBlockUseCaseTest {
             val repository = FakeBlockRepository(listOf(original[0], original[1], last))
 
             val deleted = DeleteBlockUseCase(repository)(maxId)!!
-            SaveBlockUseCase(repository, FakeIdGenerator(), catalog)(newBlockDraft())
+            SaveBlockUseCase(repository, FakeIdGenerator(), catalog, FakeClock())(newBlockDraft())
             assertEquals(last.position, repository.getBlocks().last().position)
             restoreBlockOver(repository)(deleted)
 
@@ -307,7 +308,7 @@ class RestoreBlockUseCaseTest {
                 val deleteBlock = DeleteBlockUseCase(repository)
 
                 val deletedLast = deleteBlock(maxId)!!
-                SaveBlockUseCase(repository, FakeIdGenerator(), catalog)(newBlockDraft())
+                SaveBlockUseCase(repository, FakeIdGenerator(), catalog, FakeClock())(newBlockDraft())
                 val deletedNew = deleteBlock("generated-1")!!
                 val deletedById = mapOf(maxId to deletedLast, "generated-1" to deletedNew)
                 undoOrder.forEach { restoreBlockOver(repository)(deletedById.getValue(it)) }
@@ -341,6 +342,23 @@ class RestoreBlockUseCaseTest {
         )
         assertEquals(writesBefore, repository.writes.size)
         assertEquals(false, repository.getBlocks().single { it.id == "B1" }.enabled)
+    }
+
+    @Test
+    fun `restore prunes joinedAt to the restored packages and keeps their stamps`() = runTest {
+        val deleted = block("B1", instagram.packageName, x.packageName).copy(
+            joinedAtMillisByPackage = mapOf(
+                instagram.packageName to 100L,
+                x.packageName to 200L,
+                "com.gone.app" to 300L,
+            ),
+        )
+        val repository = FakeBlockRepository(listOf(block("B2", x.packageName)))
+
+        val result = restoreBlockOver(repository)(DeletedBlock(deleted)) as RestoreBlockResult.PartiallyRestored
+
+        assertEquals(mapOf(instagram.packageName to 100L), result.block.joinedAtMillisByPackage)
+        assertEquals(result.block, repository.getBlocks().single { it.id == "B1" })
     }
 
     @Test
@@ -380,7 +398,7 @@ class RestoreBlockUseCaseTest {
     fun `restore racing a save of the same app never leaves the app in two blocks`() = runTest {
         val deleted = block("B1", instagram.packageName, x.packageName)
         val repository = FakeBlockRepository(emptyList(), beforeApply = { yield() })
-        val saveBlock = SaveBlockUseCase(repository, FakeIdGenerator(), catalog)
+        val saveBlock = SaveBlockUseCase(repository, FakeIdGenerator(), catalog, FakeClock())
         val restoreBlock = restoreBlockOver(repository)
         val draft = BlockDraft(null, "Redes", linkedSetOf(instagram.packageName), richRule)
 

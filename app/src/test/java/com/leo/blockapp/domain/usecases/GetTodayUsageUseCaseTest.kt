@@ -37,6 +37,7 @@ class GetTodayUsageUseCaseTest {
 
     private class FakeSystemPermissions(private val usageAccessGranted: Boolean) : SystemPermissions {
         override fun hasUsageAccess() = usageAccessGranted
+        override fun isAccessibilityServiceEnabled() = false
     }
 
     private inner class FakeClock(private val nowMillis: Long) : Clock {

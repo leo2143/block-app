@@ -41,6 +41,30 @@ class BlockJsonMapperTest {
     }
 
     @Test
+    fun `round trip keeps joinedAt per package`() {
+        val withJoinedAt = block("B1", position = 0).copy(
+            joinedAtMillisByPackage = mapOf("com.instagram" to 1_000L, "com.twitter" to 2_000L),
+        )
+
+        val decoded = BlockJsonMapper.decode(BlockJsonMapper.encode(listOf(withJoinedAt)))
+
+        assertEquals(listOf(withJoinedAt), decoded)
+    }
+
+    @Test
+    fun `a legacy blob without joinedAt decodes to an empty map`() {
+        val legacy = """
+            {"schemaVersion":1,"blocks":[{"id":"B1","name":"Old","packageNames":["a"],
+            "rule":{"type":"accumulated_usage_with_cooldown","usageLimitMinutes":10,"cooldownMinutes":60},
+            "position":0,"enabled":true}]}
+        """.trimIndent()
+
+        val decoded = BlockJsonMapper.decode(legacy)
+
+        assertEquals(emptyMap<String, Long>(), decoded.single().joinedAtMillisByPackage)
+    }
+
+    @Test
     fun `round trip preserves the selection order of package names`() {
         val ordered = linkedSetOf("z.last.alphabetically", "a.first.alphabetically", "m.middle")
 

@@ -240,6 +240,7 @@ private fun EditorForm(state: BlockEditorUiState.Ready, actions: EditorActions, 
                 onToggle = actions.onCapEnabled,
                 onText = actions.onCapText,
                 onTouch = { actions.onTouch(EditorField.CAP) },
+                hint = BlockEditorViewModel.CAP_APPLIES_TOMORROW_HINT.takeIf { state.capChangeAppliesTomorrow },
             )
         }
         item(key = "inactivity") {
@@ -330,6 +331,7 @@ private fun OptionalNumberField(
     onToggle: (Boolean) -> Unit,
     onText: (String) -> Unit,
     onTouch: () -> Unit,
+    hint: String? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -339,6 +341,7 @@ private fun OptionalNumberField(
         if (enabledByUser) {
             NumberField(field, errors, enabled, onText, onTouch, label = unit.replaceFirstChar { it.uppercase() })
         }
+        if (hint != null) Text(hint, style = MaterialTheme.typography.bodySmall)
     }
 }
 
