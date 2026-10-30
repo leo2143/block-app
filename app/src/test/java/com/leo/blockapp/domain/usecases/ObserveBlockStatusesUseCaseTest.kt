@@ -134,7 +134,7 @@ class ObserveBlockStatusesUseCaseTest {
 
         assertEquals(
             listOf(
-                mapOf("B1" to BlockListStatus.CoolingDown(cooldownEnd)),
+                mapOf("B1" to BlockListStatus.CoolingDown(cooldownEnd, dailyCapPending = true)),
                 mapOf("B1" to BlockListStatus.DailyCapReached(startOfNextDay)),
             ),
             emissions,
@@ -256,5 +256,53 @@ class ObserveBlockStatusesUseCaseTest {
         runCurrent()
 
         assertEquals(listOf(mapOf("B1" to BlockListStatus.CoolingDown(until))), emissions)
+    }
+
+    @Test
+    fun `a cooldown over a stored cap hold flags the cap as pending`() = runTest {
+        val cooldownEnd = startMillis + 10 * minute
+        val repository = FakeBlockStateRepository(
+            mapOf(
+                "B1" to state(cooldownEnd = cooldownEnd, holdUntil = startOfNextDay, holdReason = BlockReason.DAILY_CAP),
+            ),
+        )
+        val emissions = collect(repository)
+        runCurrent()
+
+        assertEquals(true, emissions.single().getValue("B1").dailyCapPending)
+    }
+
+    @Test
+    fun `a plain cooldown does not flag a pending cap`() = runTest {
+        val until = startMillis + 10 * minute
+        val plain = state(cooldownEnd = until, holdUntil = until, holdReason = BlockReason.COOLDOWN)
+        val emissions = collect(FakeBlockStateRepository(mapOf("B1" to plain)))
+        runCurrent()
+
+        assertEquals(false, emissions.single().getValue("B1").dailyCapPending)
+    }
+
+    @Test
+    fun `an active cap hold is pending and a normal block never is`() = runTest {
+        val capped = state(holdUntil = startOfNextDay, holdReason = BlockReason.DAILY_CAP)
+        val emissions = collect(FakeBlockStateRepository(mapOf("B1" to capped)))
+        runCurrent()
+
+        assertEquals(true, emissions.single().getValue("B1").dailyCapPending)
+        assertEquals(false, BlockListStatus.Normal.dailyCapPending)
+    }
+
+    @Test
+    fun `nothing is reported once the cap hold has ended`() = runTest {
+        val cooldownEnd = startMillis + 10 * minute
+        val capEnd = startMillis + 20 * minute
+        val repository = FakeBlockStateRepository(
+            mapOf("B1" to state(cooldownEnd = cooldownEnd, holdUntil = capEnd, holdReason = BlockReason.DAILY_CAP)),
+        )
+        val emissions = collect(repository)
+        advanceTimeBy(20 * minute + 1)
+        runCurrent()
+
+        assertEquals(emptyMap<String, BlockListStatus>(), emissions.last())
     }
 }

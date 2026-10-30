@@ -31,15 +31,20 @@ class ObserveBlockStatusesUseCase(
                 while (true) {
                     val nowMillis = clock.nowMillis()
                     val holds = states.mapNotNull { (blockId, state) -> HoldPolicy.holdOf(blockId, state, nowMillis) }
-                    emit(holds.associate { it.blockId to it.toStatus() })
+                    emit(
+                        holds.associate { hold ->
+                            val capPending = HoldPolicy.hasDailyCapHold(states.getValue(hold.blockId), nowMillis)
+                            hold.blockId to hold.toStatus(capPending)
+                        },
+                    )
                     val earliestEndMillis = holds.minOfOrNull { it.untilMillis } ?: break
                     delay(maxOf(earliestEndMillis - nowMillis, MIN_WAIT_MILLIS))
                 }
             }
             .distinctUntilChanged()
 
-    private fun ActiveHold.toStatus(): BlockListStatus = when (reason) {
-        BlockReason.COOLDOWN -> BlockListStatus.CoolingDown(untilMillis)
+    private fun ActiveHold.toStatus(capPending: Boolean): BlockListStatus = when (reason) {
+        BlockReason.COOLDOWN -> BlockListStatus.CoolingDown(untilMillis, dailyCapPending = capPending)
         BlockReason.DAILY_CAP -> BlockListStatus.DailyCapReached(untilMillis)
     }
 

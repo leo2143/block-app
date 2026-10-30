@@ -9,6 +9,9 @@ import java.util.Locale
 /** Spanish status line shown under a block in the list while a hold is active. */
 internal object BlockStatusTexts {
 
+    /** Shown over the list while the stored states cannot be read: no block is claimed to be free. */
+    const val STATUS_UNKNOWN_NOTICE = "No se pudo leer el estado de los bloqueos"
+
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
 
     /** The line for [status], or null when the block has nothing to say. The time is shown in [zone]. */

@@ -123,6 +123,7 @@ private fun BlocksListContent(
                         EmptyBlocks(Modifier.align(Alignment.Center))
                     } else {
                         Column(Modifier.fillMaxSize()) {
+                            if (!uiState.statusesKnown) StatusUnknownNotice()
                             uiState.warnings.forEach { warning ->
                                 EnforcementWarning(warning, onAction = { onWarningAction(warning) })
                             }
@@ -132,6 +133,17 @@ private fun BlocksListContent(
             }
         }
     }
+}
+
+/** Neutral notice: the states could not be read, so no block below is claimed to be free. */
+@Composable
+private fun StatusUnknownNotice() {
+    Text(
+        BlockStatusTexts.STATUS_UNKNOWN_NOTICE,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

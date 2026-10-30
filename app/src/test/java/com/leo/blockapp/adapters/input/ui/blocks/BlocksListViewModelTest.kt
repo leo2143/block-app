@@ -16,13 +16,17 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.IOException
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BlocksListViewModelTest {
@@ -263,16 +267,86 @@ class BlocksListViewModelTest {
     }
 
     @Test
-    fun `the list waits for the statuses instead of showing held blocks as free`() = runTest {
+    fun `statuses that answer in time are known from the first loaded state`() = runTest(timeout = 10.seconds) {
         val observe = FakeObserve()
-        val silentStatuses = FakeStatuses(MutableSharedFlow())
-        val vm = newViewModel(observe, statuses = silentStatuses)
+        val vm = newViewModel(observe)
         keepStateHot(vm)
 
         observe.blocks.emit(listOf(block("B1")))
         advanceUntilIdle()
 
+        assertTrue(vm.loaded().statusesKnown)
+    }
+
+    @Test
+    fun `while the statuses are silent the list waits only a short grace period`() = runTest(timeout = 10.seconds) {
+        val observe = FakeObserve()
+        val vm = newViewModel(observe, statuses = FakeStatuses(MutableSharedFlow()))
+        keepStateHot(vm)
+
+        observe.blocks.emit(listOf(block("B1")))
+        advanceTimeBy(BlocksListViewModel.STATUS_GRACE_MILLIS - 1)
+        runCurrent()
         assertEquals(BlocksListUiState.Loading, vm.uiState.value)
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertTrue(vm.uiState.value is BlocksListUiState.Loaded)
+    }
+
+    @Test
+    fun `unreadable states leave the blocks visible, flagged as unknown and never as free`() = runTest(timeout = 10.seconds) {
+        val observe = FakeObserve()
+        val setEnabled = FakeSetEnabled()
+        val vm = newViewModel(observe, setEnabled = setEnabled, statuses = FakeStatuses(MutableSharedFlow()))
+        keepStateHot(vm)
+
+        observe.blocks.emit(listOf(block("B1"), block("B2", enabled = false)))
+        advanceUntilIdle()
+        vm.setEnabled("B1", false)
+        advanceUntilIdle()
+
+        val loaded = vm.loaded()
+        assertEquals(listOf("B1", "B2"), loaded.items.map { it.id })
+        assertFalse(loaded.statusesKnown)
+        assertEquals(listOf("B1" to false), setEnabled.calls)
+    }
+
+    @Test
+    fun `statuses that arrive late replace the unknown marker and fill the lines`() = runTest(timeout = 10.seconds) {
+        val observe = FakeObserve()
+        val statuses = FakeStatuses(MutableSharedFlow())
+        val vm = newViewModel(observe, statuses = statuses)
+        keepStateHot(vm)
+        observe.blocks.emit(listOf(block("B1"), block("B2")))
+        advanceUntilIdle()
+        assertFalse(vm.loaded().statusesKnown)
+
+        statuses.statuses.emit(mapOf("B1" to BlockListStatus.CoolingDown(1_000L)))
+        advanceUntilIdle()
+
+        val loaded = vm.loaded()
+        assertTrue(loaded.statusesKnown)
+        assertEquals(listOf(BlockListStatus.CoolingDown(1_000L), BlockListStatus.Normal), loaded.items.map { it.status })
+    }
+
+    @Test
+    fun `known statuses are not forgotten when the flow stays quiet afterwards`() = runTest(timeout = 10.seconds) {
+        val observe = FakeObserve()
+        val vm = newViewModel(observe)
+        keepStateHot(vm)
+        observe.blocks.emit(listOf(block("B1")))
+        advanceUntilIdle()
+
+        advanceTimeBy(BlocksListViewModel.STATUS_GRACE_MILLIS * 3)
+        runCurrent()
+
+        assertTrue(vm.loaded().statusesKnown)
+    }
+
+    @Test
+    fun `the unknown notice is the agreed Spanish text`() {
+        assertEquals("No se pudo leer el estado de los bloqueos", BlockStatusTexts.STATUS_UNKNOWN_NOTICE)
     }
 
     // endregion

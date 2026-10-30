@@ -225,4 +225,29 @@ class HoldPolicyTest {
             HoldPolicy.activeHold(mapOf("b1" to state), instagram, nowMillis),
         )
     }
+
+    @Test
+    fun `a stored cap hold is pending while it is live, even under a running cooldown`() {
+        val underCooldown = state(
+            cooldownEndMillis = 3_000L,
+            holdUntilMillis = 9_000L,
+            holdReason = DAILY_CAP,
+            holdPackageNames = setOf(instagram),
+        )
+
+        assertEquals(true, HoldPolicy.hasDailyCapHold(capState(9_000L), nowMillis))
+        assertEquals(true, HoldPolicy.hasDailyCapHold(underCooldown, nowMillis))
+    }
+
+    @Test
+    fun `a plain cooldown, an ended cap hold or no hold is not a pending cap hold`() {
+        assertEquals(false, HoldPolicy.hasDailyCapHold(cooldownState(5_000L), nowMillis))
+        assertEquals(false, HoldPolicy.hasDailyCapHold(capState(nowMillis), nowMillis))
+        assertEquals(false, HoldPolicy.hasDailyCapHold(state(), nowMillis))
+    }
+
+    @Test
+    fun `a live hold with no reason counts as a cap hold, like holdOf`() {
+        assertEquals(true, HoldPolicy.hasDailyCapHold(state(holdUntilMillis = 9_000L), nowMillis))
+    }
 }

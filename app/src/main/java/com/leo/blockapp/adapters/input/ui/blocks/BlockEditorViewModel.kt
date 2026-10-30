@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockDraft
-import com.leo.blockapp.domain.model.BlockListStatus
 import com.leo.blockapp.domain.model.BlockRule
 import com.leo.blockapp.domain.model.BlockViolation
 import com.leo.blockapp.domain.model.SaveBlockResult
@@ -15,12 +14,18 @@ import com.leo.blockapp.domain.ports.input.ObserveBlockStatuses
 import com.leo.blockapp.domain.ports.input.SaveBlock
 import com.leo.blockapp.domain.ports.input.ValidateBlock
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import java.io.IOException
 import javax.inject.Inject
@@ -66,12 +71,30 @@ class BlockEditorViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { open() }
-        if (blockId != null) viewModelScope.launch { followCapHold(blockId) }
+        if (blockId != null) viewModelScope.launch { followCapHoldWhileObserved(blockId) }
+    }
+
+    /**
+     * Follows the block status only while the screen observes [uiState] (plus a grace period for rotation), like
+     * `stateIn(WhileSubscribed)` does: a hidden editor must not keep the domain wake-up timer and recomputes alive.
+     * The state itself stays a plain [MutableStateFlow] so edits are visible synchronously.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun followCapHoldWhileObserved(id: String) {
+        _uiState.subscriptionCount
+            .map { it > 0 }
+            .distinctUntilChanged()
+            .transformLatest { observed ->
+                if (!observed) delay(STOP_TIMEOUT_MILLIS)
+                emit(observed)
+            }
+            .distinctUntilChanged()
+            .collectLatest { observed -> if (observed) followCapHold(id) }
     }
 
     private suspend fun followCapHold(id: String) {
         observeBlockStatuses().collect { statuses ->
-            capHoldActive = statuses[id] is BlockListStatus.DailyCapReached
+            capHoldActive = statuses[id]?.dailyCapPending == true
             ready()?.let { _uiState.value = recomputed(it) }
         }
     }
@@ -393,6 +416,9 @@ class BlockEditorViewModel @Inject constructor(
     // endregion
 
     internal companion object {
+        /** How long the status feed outlives the last observer of the state (configuration changes). */
+        const val STOP_TIMEOUT_MILLIS = 5_000L
+
         const val KEY_BLOCK_ID = "blockId"
         const val KEY_NAME = "draft.name"
         const val KEY_NAME_EDITED = "draft.nameEditedByUser"

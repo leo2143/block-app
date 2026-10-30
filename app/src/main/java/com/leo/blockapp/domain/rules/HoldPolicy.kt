@@ -29,6 +29,16 @@ object HoldPolicy {
             )
 
     /**
+     * True while the block has a live DAILY_CAP hold stored (`holdUntil > now`; a missing reason counts as
+     * DAILY_CAP, like [holdOf]), even when a running cooldown is what [holdOf] reports. A cap change made now does
+     * not lift that hold today.
+     */
+    fun hasDailyCapHold(state: BlockState, nowMillis: Long): Boolean {
+        val holdUntilMillis = state.holdUntilMillis ?: return false
+        return holdUntilMillis > nowMillis && (state.holdReason ?: BlockReason.DAILY_CAP) == BlockReason.DAILY_CAP
+    }
+
+    /**
      * The active hold of one block, or null when nothing holds it. Fails closed on inconsistent state: a running
      * cooldown holds until `cooldownEnd` whatever the hold fields say, and a live `holdUntil` without a reason is
      * treated as DAILY_CAP.
