@@ -39,8 +39,9 @@ sealed interface BlockingUiState {
  * last query and is measured with a [MonotonicClock], so a late tick or a system time change cannot shift it. The
  * status is re-queried when the screen resumes and when the countdown reaches zero.
  *
- * A failed query is never treated as "released": the screen keeps its last known content (or a generic blocked
- * state) and retries until the port gives a real answer.
+ * A failed query is never treated as "released": the screen keeps its last known content while it is still counting
+ * down, switches to a generic blocked state once that content is stale (nothing known, or the countdown hit zero),
+ * and retries until the port gives a real answer. The job only runs while the screen is visible ([onStop]).
  */
 @HiltViewModel
 class BlockingViewModel @Inject constructor(
@@ -70,6 +71,12 @@ class BlockingViewModel @Inject constructor(
         packageName?.let(::start)
     }
 
+    /** The screen is no longer visible: stop ticking and retrying. [onResume] picks the status up again. */
+    fun onStop() {
+        job?.cancel()
+        job = null
+    }
+
     private fun start(packageName: String) {
         job?.cancel()
         job = viewModelScope.launch { follow(packageName) }
@@ -79,7 +86,7 @@ class BlockingViewModel @Inject constructor(
         while (true) {
             when (val status = query(packageName)) {
                 null -> {
-                    if (_uiState.value == BlockingUiState.Loading) _uiState.value = BlockingUiState.Unavailable
+                    if (isContentUntrusted(_uiState.value)) _uiState.value = BlockingUiState.Unavailable
                     delay(RETRY_DELAY_MILLIS)
                 }
                 BlockScreenState.Inactive -> {
@@ -90,6 +97,10 @@ class BlockingViewModel @Inject constructor(
             }
         }
     }
+
+    /** Nothing known yet, or a countdown that already hit zero and could not be confirmed: do not keep it on screen. */
+    private fun isContentUntrusted(state: BlockingUiState): Boolean =
+        state == BlockingUiState.Loading || (state is BlockingUiState.Blocked && state.remainingMillis == 0L)
 
     /** The status, or null when it could not be read. Cancellation is never swallowed. */
     private suspend fun query(packageName: String): BlockScreenState? = try {

@@ -73,6 +73,13 @@ class BlockingActivity : ComponentActivity() {
         if (skipNextResumeQuery) skipNextResumeQuery = false else viewModel.onResume()
     }
 
+    override fun onStop() {
+        super.onStop()
+        // The next resume must re-query, whatever happened before (a stale skip flag would leave the job dead).
+        skipNextResumeQuery = false
+        viewModel.onStop()
+    }
+
     private fun blockedPackageName(intent: Intent): String? =
         intent.getStringExtra(getString(R.string.extra_blocked_package_name))?.takeIf { it.isNotBlank() }
 

@@ -5,7 +5,9 @@ import com.leo.blockapp.domain.model.BlockReason
 import com.leo.blockapp.domain.model.BlockScreenState
 import com.leo.blockapp.domain.ports.input.GetAppBlockingStatus
 import kotlinx.coroutines.CompletableDeferred
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -14,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import java.io.IOException
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BlockingViewModelTest {
@@ -29,6 +32,7 @@ class BlockingViewModelTest {
     private val statuses = mutableListOf<ScriptedStatus>()
     private val manualClocks = mutableListOf<ManualMonotonicClock>()
     private val gates = mutableListOf<CompletableDeferred<BlockScreenState>>()
+    private val viewModels = mutableListOf<BlockingViewModel>()
 
     private fun newGate() = CompletableDeferred<BlockScreenState>().also { gates += it }
 
@@ -36,10 +40,12 @@ class BlockingViewModelTest {
      * runTest drains the scheduler after the body, and a countdown that re-queries forever never goes idle. So when
      * the body ends everything is released: statuses answer Inactive, manual clocks jump ahead, gates open.
      */
-    private fun vmTest(body: suspend TestScope.() -> Unit) = runTest(mainDispatcherRule.dispatcher) {
+    private fun vmTest(body: suspend TestScope.() -> Unit) = runTest(mainDispatcherRule.dispatcher, timeout = 10.seconds) {
         try {
             body()
         } finally {
+            // Stop every ViewModel first so a regression in the ticker or retry loop fails the test instead of draining forever.
+            viewModels.forEach { it.viewModelScope.cancel() }
             statuses.forEach { it.answer = { BlockScreenState.Inactive } }
             manualClocks.forEach { it.nowMillis = Long.MAX_VALUE / 2 }
             gates.forEach { it.complete(BlockScreenState.Inactive) }
@@ -74,7 +80,7 @@ class BlockingViewModelTest {
     private fun TestScope.viewModel(
         status: ScriptedStatus,
         clock: MonotonicClock = MonotonicClock { testScheduler.currentTime },
-    ) = BlockingViewModel(status, clock)
+    ) = BlockingViewModel(status, clock).also { viewModels += it }
 
     private fun blocked(remaining: Long, name: String = "Redes", reason: BlockReason = BlockReason.COOLDOWN) =
         BlockingUiState.Blocked(name, reason, remaining)
@@ -176,7 +182,7 @@ class BlockingViewModelTest {
         }
 
     @Test
-    fun `it never counts below zero while waiting for the re-query`() = vmTest {
+    fun `it never counts below zero and fails closed when the re-query at zero fails`() = vmTest {
         val clock = ManualMonotonicClock()
         val status = ScriptedStatus { active(5 * second) }
         val vm = viewModel(status, clock)
@@ -188,7 +194,77 @@ class BlockingViewModelTest {
         advanceTimeBy(second)
         runCurrent()
 
-        assertEquals(blocked(0), vm.uiState.value)
+        assertEquals(BlockingUiState.Unavailable, vm.uiState.value)
+    }
+
+    @Test
+    fun `a failed re-query at zero shows unavailable and a later answer shows the new state`() = vmTest {
+        val status = ScriptedStatus { active(3 * second) }
+        val vm = viewModel(status)
+        vm.show(instagram)
+        runCurrent()
+        status.answer = { throw IOException("disk") }
+
+        advanceTimeBy(3 * second)
+        runCurrent()
+        assertEquals(BlockingUiState.Unavailable, vm.uiState.value)
+
+        status.answer = { active(5 * minute) }
+        advanceTimeBy(second)
+        runCurrent()
+
+        assertEquals(blocked(5 * minute), vm.uiState.value)
+    }
+
+    @Test
+    fun `stopping cancels the ticker so nothing is queried or emitted while stopped`() = vmTest {
+        val status = ScriptedStatus { active(10 * second) }
+        val vm = viewModel(status)
+        vm.show(instagram)
+        runCurrent()
+
+        vm.onStop()
+        val queriesWhenStopped = status.queries.size
+        advanceTimeBy(30 * second)
+        runCurrent()
+
+        assertEquals(blocked(10 * second), vm.uiState.value)
+        assertEquals(queriesWhenStopped, status.queries.size)
+    }
+
+    @Test
+    fun `stopping cancels the retry loop while storage keeps failing`() = vmTest {
+        val status = ScriptedStatus { throw IOException("disk") }
+        val vm = viewModel(status)
+        vm.show(instagram)
+        runCurrent()
+
+        vm.onStop()
+        val queriesWhenStopped = status.queries.size
+        advanceTimeBy(10 * second)
+        runCurrent()
+
+        assertEquals(queriesWhenStopped, status.queries.size)
+    }
+
+    @Test
+    fun `resuming after a stop re-queries and resumes the countdown`() = vmTest {
+        val status = ScriptedStatus { active(10 * second) }
+        val vm = viewModel(status)
+        vm.show(instagram)
+        runCurrent()
+        vm.onStop()
+        status.answer = { active(5 * second) }
+
+        vm.onResume()
+        runCurrent()
+        assertEquals(blocked(5 * second), vm.uiState.value)
+
+        advanceTimeBy(2 * second)
+        runCurrent()
+
+        assertEquals(blocked(3 * second), vm.uiState.value)
+        assertEquals(2, status.queries.size)
     }
 
     @Test
