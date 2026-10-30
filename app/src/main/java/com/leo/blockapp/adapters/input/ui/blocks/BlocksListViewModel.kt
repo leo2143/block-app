@@ -152,7 +152,11 @@ class BlocksListViewModel @Inject constructor(
     internal companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
 
-        /** How long the list waits for the first statuses before showing the blocks as "unknown". */
-        const val STATUS_GRACE_MILLIS = 2_000L
+        /**
+         * How long the list waits for the first statuses before showing the blocks as "unknown". Generous so a slow
+         * cold read is not reported as a failure. Once statuses were known, a later storage failure keeps the last
+         * known lines (accepted, fail closed: hold lines may linger, never a false "free").
+         */
+        const val STATUS_GRACE_MILLIS = 4_000L
     }
 }

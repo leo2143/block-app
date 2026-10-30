@@ -293,6 +293,30 @@ class ObserveBlockStatusesUseCaseTest {
     }
 
     @Test
+    fun `the pending cap flag clears when the cap hold ends during a longer cooldown`() = runTest {
+        val capEnd = startMillis + 60 * minute
+        val cooldownEnd = startMillis + 120 * minute
+        val repository = FakeBlockStateRepository(
+            mapOf("B1" to state(cooldownEnd = cooldownEnd, holdUntil = capEnd, holdReason = BlockReason.DAILY_CAP)),
+        )
+        val emissions = collect(repository)
+        runCurrent()
+        advanceTimeBy(60 * minute + 1)
+        runCurrent()
+        advanceTimeBy(60 * minute)
+        runCurrent()
+
+        assertEquals(
+            listOf(
+                mapOf("B1" to BlockListStatus.CoolingDown(cooldownEnd, dailyCapPending = true)),
+                mapOf("B1" to BlockListStatus.CoolingDown(cooldownEnd, dailyCapPending = false)),
+                emptyMap<String, BlockListStatus>(),
+            ),
+            emissions,
+        )
+    }
+
+    @Test
     fun `nothing is reported once the cap hold has ended`() = runTest {
         val cooldownEnd = startMillis + 10 * minute
         val capEnd = startMillis + 20 * minute

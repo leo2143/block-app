@@ -14,7 +14,8 @@ import kotlinx.coroutines.flow.transformLatest
 
 /**
  * Status lines from the same [HoldPolicy] that drives enforcement. For each emission of the stored states it emits
- * the lines for "now", then sleeps until the earliest active hold ends and emits again (a cooldown that ends hands
+ * the lines for "now", then sleeps until the earliest instant a line can change (an active hold ends, or a cap hold
+ * behind a running cooldown ends) and emits again (a cooldown that ends hands
  * over to a longer cap hold, or to nothing). A new state emission cancels the pending wake-up. There is no polling:
  * with no active hold it just waits for the next state change.
  *
@@ -37,8 +38,13 @@ class ObserveBlockStatusesUseCase(
                             hold.blockId to hold.toStatus(capPending)
                         },
                     )
-                    val earliestEndMillis = holds.minOfOrNull { it.untilMillis } ?: break
-                    delay(maxOf(earliestEndMillis - nowMillis, MIN_WAIT_MILLIS))
+                    // Every instant at which an emitted field can change: a displayed hold ends, or a live cap hold
+                    // behind a running cooldown ends (which flips dailyCapPending).
+                    val capEndsMillis = states.values
+                        .filter { HoldPolicy.hasDailyCapHold(it, nowMillis) }
+                        .mapNotNull { it.holdUntilMillis }
+                    val nextChangeMillis = (holds.map { it.untilMillis } + capEndsMillis).minOrNull() ?: break
+                    delay(maxOf(nextChangeMillis - nowMillis, MIN_WAIT_MILLIS))
                 }
             }
             .distinctUntilChanged()
