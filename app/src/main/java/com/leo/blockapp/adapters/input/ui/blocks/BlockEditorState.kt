@@ -34,6 +34,11 @@ sealed interface BlockEditorUiState {
         val showDiscardDialog: Boolean,
         /** True after a successful save: the screen navigates back without the discard dialog. */
         val saved: Boolean,
+        /**
+         * True while the block's daily cap is reached and the cap in the form is higher than (or removed from) the
+         * one the block has: the change does not lift the current hold, it applies from tomorrow.
+         */
+        val capChangeAppliesTomorrow: Boolean = false,
     ) : BlockEditorUiState
 }
 

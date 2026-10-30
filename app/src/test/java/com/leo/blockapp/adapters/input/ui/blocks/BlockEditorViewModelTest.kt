@@ -6,6 +6,7 @@ import com.leo.blockapp.domain.blocks.BlockValidator
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockChangeSummary
 import com.leo.blockapp.domain.model.BlockDraft
+import com.leo.blockapp.domain.model.BlockListStatus
 import com.leo.blockapp.domain.model.BlockRule
 import com.leo.blockapp.domain.model.BlockViolation
 import com.leo.blockapp.domain.model.MoveConflict
@@ -17,6 +18,9 @@ import com.leo.blockapp.domain.ports.input.SaveBlock
 import com.leo.blockapp.domain.ports.input.ValidateBlock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -98,6 +102,7 @@ class BlockEditorViewModelTest {
         blocks: List<Block> = emptyList(),
         handle: SavedStateHandle = SavedStateHandle(),
         validateBlock: ValidateBlock = RealValidateBlock(),
+        statuses: Flow<Map<String, BlockListStatus>> = flowOf(emptyMap()),
         onSave: suspend (BlockDraft, Set<String>) -> SaveBlockResult = { _, _ -> savedResult() },
     ): BlockEditorViewModel {
         if (blockId != null) handle["blockId"] = blockId
@@ -109,6 +114,7 @@ class BlockEditorViewModelTest {
             listSelectableApps = listApps,
             validateBlock = validateBlock,
             saveBlock = saveBlock,
+            observeBlockStatuses = { statuses },
         )
         advanceUntilIdle()
         return vm
@@ -529,6 +535,7 @@ class BlockEditorViewModelTest {
             listSelectableApps = listApps,
             validateBlock = RealValidateBlock(),
             saveBlock = saveBlock,
+            observeBlockStatuses = { flowOf(emptyMap()) },
         )
         advanceUntilIdle()
         return vm
@@ -1131,6 +1138,133 @@ class BlockEditorViewModelTest {
         newViewModel(blockId = "B9")
 
         assertTrue(listApps.requestedIds.isEmpty())
+    }
+
+    // endregion
+
+    // region Group E: cap change during a cap hold (C2 hint)
+
+    private val cappedBlock = existingBlock(
+        rule = BlockRule.AccumulatedUsageWithCooldown(
+            usageLimitMinutes = 10,
+            cooldownMinutes = 60,
+            dailyCycleCap = 3,
+        ),
+    )
+    private val capHold = mapOf("B1" to BlockListStatus.DailyCapReached(1_000L))
+
+    @Test
+    fun `raising the cap during a cap hold says it applies from tomorrow`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(capHold))
+
+        vm.setCapText("5")
+
+        assertTrue(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `opening the editor during a cap hold shows no hint until the cap is raised`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(capHold))
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `removing the cap during a cap hold also applies from tomorrow`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(capHold))
+
+        vm.setCapEnabled(false)
+
+        assertTrue(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `the hint copy is the agreed Spanish text`() {
+        assertEquals("Se aplica desde mañana", BlockEditorViewModel.CAP_APPLIES_TOMORROW_HINT)
+    }
+
+    @Test
+    fun `lowering or keeping the cap shows no hint`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(capHold))
+
+        vm.setCapText("2")
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+        vm.setCapText("3")
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `a cap that does not parse shows no hint`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(capHold))
+
+        vm.setCapText("abc")
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `raising the cap without a cap hold shows no hint`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(emptyMap()))
+
+        vm.setCapText("5")
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `a cooldown hold alone does not trigger the hint`() = runTest {
+        val cooldownHold = mapOf("B1" to BlockListStatus.CoolingDown(1_000L))
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(cooldownHold))
+
+        vm.setCapText("5")
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `the hold of another block does not trigger the hint`() = runTest {
+        val otherHold = mapOf("B2" to BlockListStatus.DailyCapReached(1_000L))
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = flowOf(otherHold))
+
+        vm.setCapText("5")
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `switching the cap on for a block that had none shows no hint`() = runTest {
+        val vm = newViewModel(blockId = "B1", blocks = listOf(existingBlock()), statuses = flowOf(capHold))
+
+        vm.setCapEnabled(true)
+        vm.setCapText("9")
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `a new block never shows the hint`() = runTest {
+        val vm = newViewModel(statuses = flowOf(capHold))
+
+        vm.setCapEnabled(true)
+        vm.setCapText("9")
+
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+    }
+
+    @Test
+    fun `the hint follows the hold when it starts or ends while the editor is open`() = runTest {
+        val statuses = MutableSharedFlow<Map<String, BlockListStatus>>(replay = 1)
+        val vm = newViewModel(blockId = "B1", blocks = listOf(cappedBlock), statuses = statuses)
+        vm.setCapText("5")
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
+
+        statuses.emit(capHold)
+        advanceUntilIdle()
+        assertTrue(vm.ready().capChangeAppliesTomorrow)
+
+        statuses.emit(emptyMap())
+        advanceUntilIdle()
+        assertFalse(vm.ready().capChangeAppliesTomorrow)
     }
 
     // endregion

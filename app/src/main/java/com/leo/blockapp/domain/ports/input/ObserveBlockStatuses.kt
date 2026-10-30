@@ -9,6 +9,6 @@ import kotlinx.coroutines.flow.Flow
  * ends, with no polling. It stays silent while the states cannot be read: consumers must not treat a missing
  * emission as "nothing is held".
  */
-interface ObserveBlockStatuses {
+fun interface ObserveBlockStatuses {
     operator fun invoke(): Flow<Map<String, BlockListStatus>>
 }

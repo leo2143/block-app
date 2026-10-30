@@ -5,11 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.leo.blockapp.domain.model.Block
 import com.leo.blockapp.domain.model.BlockDraft
+import com.leo.blockapp.domain.model.BlockListStatus
 import com.leo.blockapp.domain.model.BlockRule
 import com.leo.blockapp.domain.model.BlockViolation
 import com.leo.blockapp.domain.model.SaveBlockResult
 import com.leo.blockapp.domain.ports.input.GetBlock
 import com.leo.blockapp.domain.ports.input.ListSelectableApps
+import com.leo.blockapp.domain.ports.input.ObserveBlockStatuses
 import com.leo.blockapp.domain.ports.input.SaveBlock
 import com.leo.blockapp.domain.ports.input.ValidateBlock
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -39,6 +41,7 @@ class BlockEditorViewModel @Inject constructor(
     private val listSelectableApps: ListSelectableApps,
     private val validateBlock: ValidateBlock,
     private val saveBlock: SaveBlock,
+    private val observeBlockStatuses: ObserveBlockStatuses,
 ) : ViewModel() {
 
     private val blockId: String? = savedStateHandle.get<String>(KEY_BLOCK_ID)
@@ -55,8 +58,22 @@ class BlockEditorViewModel @Inject constructor(
     /** Violations reported by SaveBlock itself (race / safety net). Cleared by the next edit. */
     private var domainViolations: Set<BlockViolation> = emptySet()
 
+    /** The cap the block had when the editor opened; null for a new block or one without a cap. */
+    private var openedCap: Int? = null
+
+    /** True while the edited block is held by its daily cap (from the status port). */
+    private var capHoldActive = false
+
     init {
         viewModelScope.launch { open() }
+        if (blockId != null) viewModelScope.launch { followCapHold(blockId) }
+    }
+
+    private suspend fun followCapHold(id: String) {
+        observeBlockStatuses().collect { statuses ->
+            capHoldActive = statuses[id] is BlockListStatus.DailyCapReached
+            ready()?.let { _uiState.value = recomputed(it) }
+        }
     }
 
     // region Form changes
@@ -179,6 +196,7 @@ class BlockEditorViewModel @Inject constructor(
             }
         }
         val apps = listSelectableApps(blockId)
+        openedCap = (block?.rule as? BlockRule.AccumulatedUsageWithCooldown)?.dailyCycleCap
         val opened = if (block != null) readyFrom(block) else newEditorState()
         val withApps = opened.copy(apps = apps)
         initialSnapshot = snapshotOf(recomputed(withApps))
@@ -295,7 +313,18 @@ class BlockEditorViewModel @Inject constructor(
         )
         val live = liveViolations(named)
         val visibleLive = if (named.submitAttempted) live else live.filterTo(mutableSetOf()) { it.field() in named.touchedFields }
-        return named.copy(visibleViolations = visibleLive + domainViolations)
+        return named.copy(
+            visibleViolations = visibleLive + domainViolations,
+            capChangeAppliesTomorrow = capChangeAppliesTomorrow(named),
+        )
+    }
+
+    private fun capChangeAppliesTomorrow(state: BlockEditorUiState.Ready): Boolean {
+        val savedCap = openedCap
+        if (!capHoldActive || savedCap == null) return false
+        if (!state.capEnabled) return true
+        val formCap = state.cap.value ?: return false
+        return formCap > savedCap
     }
 
     private fun liveViolations(state: BlockEditorUiState.Ready): Set<BlockViolation> {
@@ -377,6 +406,7 @@ class BlockEditorViewModel @Inject constructor(
         const val KEY_INACTIVITY = "draft.inactivity"
 
         const val BLOCK_GONE = "Este bloqueo ya no existe"
+        const val CAP_APPLIES_TOMORROW_HINT = "Se aplica desde mañana"
 
         private const val DEFAULT_LIMIT_MINUTES = 10
         private const val DEFAULT_COOLDOWN_MINUTES = 60
