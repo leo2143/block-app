@@ -20,6 +20,8 @@ data class EnforcerTiming(
     val tickMillis: Long = 5_000,
     /** How long to wait for the block screen window before falling back to the home action. */
     val launchConfirmMillis: Long = 1_500,
+    /** How long an enforced app seen only through its window must stay visible before it is enforced. */
+    val visibilityConfirmMillis: Long = 1_000,
     val retryInitialMillis: Long = 1_000,
     val retryMaxMillis: Long = 30_000,
 )

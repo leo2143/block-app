@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
+import com.leo.blockapp.R
 import com.leo.blockapp.adapters.input.service.enforcer.ForegroundEnforcer
 import com.leo.blockapp.adapters.input.service.enforcer.WindowVisibility
 import com.leo.blockapp.domain.ports.input.EvaluateForegroundApp
@@ -25,7 +26,8 @@ import javax.inject.Inject
 
 /**
  * Input adapter: tells the [ForegroundEnforcer] which window came to the front and when the device woke up.
- * It reads only the package of TYPE_WINDOW_STATE_CHANGED events and the package of the application windows on screen
+ * It reads only the package and class name of TYPE_WINDOW_STATE_CHANGED events (the class tells the block screen
+ * from the rest of this app) and the package of the application windows on screen
  * (to tell split-screen from leaving an app), and decides nothing: all the policy lives in the enforcer, which sees
  * input ports only.
  *
@@ -79,7 +81,8 @@ class ForegroundAppAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val packageName = event.packageName?.toString() ?: return
-        enforcer?.onWindowChanged(packageName)
+        val isBlockScreen = event.className?.toString() == getString(R.string.class_block_screen)
+        enforcer?.onWindowChanged(packageName, isBlockScreen)
     }
 
     override fun onInterrupt() = Unit

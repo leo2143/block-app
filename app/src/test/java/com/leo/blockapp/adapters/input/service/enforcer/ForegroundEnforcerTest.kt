@@ -307,7 +307,7 @@ class ForegroundEnforcerTest {
         runCurrent()
 
         advanceTimeBy(1_000)
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
         advanceTimeBy(2_000)
         runCurrent()
 
@@ -352,7 +352,7 @@ class ForegroundEnforcerTest {
         harness.foreground.app = ForegroundApp(instagram, 1_234)
         harness.enforcer.onWindowChanged(instagram)
         runCurrent()
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
         harness.foreground.app = ForegroundApp(ownPackage, baseTimeMillis)
 
         passTicks(4)
@@ -367,7 +367,7 @@ class ForegroundEnforcerTest {
         val harness = harness()
         harness.evaluate.verdictFor = { harness.restricted() }
         harness.foreground.app = ForegroundApp(ownPackage, baseTimeMillis)
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
         passTicks(1)
 
         harness.foreground.app = ForegroundApp(instagram, 9_999)
@@ -623,7 +623,7 @@ class ForegroundEnforcerTest {
         harness.foreground.app = ForegroundApp(instagram, 1_234)
         harness.enforcer.onWindowChanged(instagram)
         runCurrent()
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
         runCurrent()
         assertEquals(1, harness.launcher.launches.size)
 
@@ -642,7 +642,7 @@ class ForegroundEnforcerTest {
         harness.foreground.app = ForegroundApp(instagram, 1_234)
         harness.enforcer.onWindowChanged(instagram)
         runCurrent()
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
         advanceTimeBy(2_000)
         runCurrent()
 
@@ -702,6 +702,7 @@ class ForegroundEnforcerTest {
         harness.enforcer.onWindowChanged(instagram)
         runCurrent()
 
+        harness.visibility.visiblePackages += instagram
         harness.foreground.failure = IOException("events unavailable")
         passTicks(1)
 
@@ -717,7 +718,7 @@ class ForegroundEnforcerTest {
         harness.foreground.app = ForegroundApp(instagram, 1_234)
         harness.enforcer.onWindowChanged(instagram)
         runCurrent()
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
 
         harness.visibility.visiblePackages += instagram
         harness.foreground.app = ForegroundApp(whatsapp, 8_000)
@@ -942,7 +943,7 @@ class ForegroundEnforcerTest {
         harness.foreground.app = ForegroundApp(instagram, 1_234)
         harness.enforcer.onWindowChanged(instagram)
         runCurrent()
-        harness.enforcer.onWindowChanged(ownPackage)
+        harness.enforcer.onWindowChanged(ownPackage, isBlockScreen = true)
 
         // Usage still lags on the target and the target is visible next to the block screen (split screen).
         harness.visibility.visiblePackages += instagram
@@ -963,6 +964,8 @@ class ForegroundEnforcerTest {
 
         harness.enforcer.onDeviceAwake()
         runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
 
         assertEquals(listOf(instagram), harness.evaluate.calls.map { it.packageName })
         assertEquals(listOf(instagram), harness.launcher.launches)
@@ -976,6 +979,8 @@ class ForegroundEnforcerTest {
         harness.visibility.visiblePackages += instagram
 
         harness.start()
+        runCurrent()
+        advanceTimeBy(1_000)
         runCurrent()
 
         assertEquals(listOf(instagram), harness.evaluate.calls.map { it.packageName })
@@ -1125,6 +1130,141 @@ class ForegroundEnforcerTest {
         runCurrent()
 
         assertEquals(listOf(Call(instagram, 5)), harness.evaluate.calls)
+    }
+
+    // --- Block screen detection by its own window ---
+
+    @Test
+    fun `a usage reading of the own app while the last window event is the target still launches the block screen`() =
+        runTest {
+            val harness = harness()
+            harness.evaluate.verdictFor = { harness.restricted() }
+            harness.foreground.app = ForegroundApp(ownPackage, 100)
+
+            harness.enforcer.onWindowChanged(instagram)
+            runCurrent()
+
+            assertEquals(listOf(instagram), harness.launcher.launches)
+        }
+
+    @Test
+    fun `a window of the own package that is not the block screen does not cancel the home fallback`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        advanceTimeBy(1_000)
+        harness.enforcer.onWindowChanged(ownPackage)
+        advanceTimeBy(600)
+        runCurrent()
+
+        assertEquals(1, harness.launcher.homeCount)
+    }
+
+    // --- Unreadable foreground ---
+
+    @Test
+    fun `an unreadable foreground with the target not visible after a launcher event stops the loop`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = null
+        harness.enforcer.onWindowChanged(launcherPackage)
+        runCurrent()
+        passTicks(3)
+
+        assertEquals(listOf(instagram), harness.launcher.launches)
+        assertEquals(1, harness.evaluate.calls.size)
+    }
+
+    @Test
+    fun `an unreadable foreground with the target visible after a launcher event keeps the loop`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.visibility.visiblePackages += instagram
+        harness.foreground.app = null
+        harness.enforcer.onWindowChanged(launcherPackage)
+        runCurrent()
+        passTicks(2)
+
+        assertEquals(3, harness.evaluate.calls.size)
+    }
+
+    @Test
+    fun `an unreadable foreground on a tick with the target not visible stops the loop`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = null
+        passTicks(3)
+
+        assertEquals(1, harness.evaluate.calls.size)
+    }
+
+    // --- Visibility fallback ---
+
+    @Test
+    fun `a transient event while the departed app window is still listed does not restart a loop`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+        harness.foreground.app = ForegroundApp(launcherPackage, 9_000)
+        harness.enforcer.onWindowChanged(launcherPackage)
+        runCurrent()
+
+        harness.visibility.visiblePackages += instagram
+        harness.enforcer.onWindowChanged(statusBar)
+        runCurrent()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(1, harness.evaluate.calls.size)
+        assertEquals(listOf(instagram), harness.launcher.launches)
+    }
+
+    @Test
+    fun `an enforced app visible only once is not enforced`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.visibility.visiblePackages += instagram
+
+        harness.enforcer.onDeviceAwake()
+        runCurrent()
+        harness.visibility.visiblePackages.clear()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertTrue(harness.evaluate.calls.isEmpty())
+    }
+
+    // --- Screen state at the home fallback ---
+
+    @Test
+    fun `the device locking within the confirmation window does not send the user home`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        advanceTimeBy(1_000)
+        harness.screen.interactiveAndUnlocked = false
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(0, harness.launcher.homeCount)
     }
 
     private companion object {

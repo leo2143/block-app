@@ -23,6 +23,9 @@ data class HomeActivity(val packageName: String, val className: String)
  * Recents provider (Quickstep) is a HOME-capable package that is not the default when a third-party launcher is set.
  * The resolver (`android`, answered when no default is set) and fallback homes (AOSP `FallbackHome` in Settings) are
  * not launchers.
+ *
+ * Accepted limitation: since every HOME-capable package (except `android` and `*FallbackHome`) is a launcher, a
+ * secondary, easy-mode or kiosk launcher is never treated as an app and cannot be blocked.
  */
 fun homeLauncherPackages(homeActivities: List<HomeActivity>): Set<String> =
     homeActivities

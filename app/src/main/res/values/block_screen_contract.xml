@@ -6,4 +6,6 @@
     -->
     <string name="action_show_block_screen" translatable="false">com.leo.blockapp.action.SHOW_BLOCK_SCREEN</string>
     <string name="extra_blocked_package_name" translatable="false">packageName</string>
+    <!-- Class name of the block screen window, as reported by its TYPE_WINDOW_STATE_CHANGED events. -->
+    <string name="class_block_screen" translatable="false">com.leo.blockapp.adapters.input.ui.blocking.BlockingActivity</string>
 </resources>

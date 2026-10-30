@@ -15,6 +15,9 @@ import com.leo.blockapp.adapters.input.service.enforcer.homeLauncherPackages
  * Every package with a HOME activity counts as a launcher, plus the default home: the Recents provider is HOME-capable
  * but not the default when a third-party launcher is set, and opening Recents must end the loop. The resolver and
  * fallback homes are left out (see [homeLauncherPackages]).
+ *
+ * Accepted limitation: every HOME-capable package (except `android` and `*FallbackHome`) is a launcher, so a
+ * secondary, easy-mode or kiosk launcher cannot be blocked.
  */
 @Suppress("DEPRECATION")
 fun createSystemForegroundFilter(context: Context): ForegroundFilter {
