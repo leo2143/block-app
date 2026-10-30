@@ -60,7 +60,8 @@ object UseCasesModule {
         blockRepository: BlockRepository,
         idGenerator: IdGenerator,
         installedAppCatalog: InstalledAppCatalog,
-    ): SaveBlock = SaveBlockUseCase(blockRepository, idGenerator, installedAppCatalog)
+        clock: Clock,
+    ): SaveBlock = SaveBlockUseCase(blockRepository, idGenerator, installedAppCatalog, clock)
 
     @Provides
     fun provideSetBlockEnabled(blockRepository: BlockRepository): SetBlockEnabled =

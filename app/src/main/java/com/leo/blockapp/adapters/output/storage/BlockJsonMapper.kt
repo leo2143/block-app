@@ -50,6 +50,7 @@ internal object BlockJsonMapper {
         rule = rule.toDto(),
         position = position,
         enabled = enabled,
+        joinedAtMillisByPackage = joinedAtMillisByPackage,
     )
 
     private fun BlockRule.toDto(): BlockRuleDto = when (this) {
@@ -68,6 +69,7 @@ internal object BlockJsonMapper {
         rule = rule.toDomain(),
         position = position,
         enabled = enabled,
+        joinedAtMillisByPackage = joinedAtMillisByPackage,
     )
 
     private fun BlockRuleDto.toDomain(): BlockRule = when (this) {

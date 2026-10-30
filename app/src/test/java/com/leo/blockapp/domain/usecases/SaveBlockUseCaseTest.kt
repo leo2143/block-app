@@ -1,6 +1,7 @@
 package com.leo.blockapp.domain.usecases
 
 import com.leo.blockapp.domain.fakes.FakeBlockRepository
+import com.leo.blockapp.domain.fakes.FakeClock
 import com.leo.blockapp.domain.fakes.FakeIdGenerator
 import com.leo.blockapp.domain.fakes.FakeInstalledAppCatalog
 import com.leo.blockapp.domain.model.Block
@@ -42,8 +43,11 @@ class SaveBlockUseCaseTest {
         rule: BlockRule = defaultRule,
     ) = BlockDraft(id, name, LinkedHashSet(packageNames), rule)
 
+    private val saveTimeMillis = 5_000_000L
+    private val clock = FakeClock(nowMillis = saveTimeMillis)
+
     private fun saveBlockOver(repository: FakeBlockRepository) =
-        SaveBlockUseCase(repository, idGenerator, catalog)
+        SaveBlockUseCase(repository, idGenerator, catalog, clock)
 
     private fun summary(
         affected: Set<String>,
@@ -60,8 +64,82 @@ class SaveBlockUseCaseTest {
         val result = saveBlockOver(repository)(draft(name = "  Redes  "))
 
         val saved = result as SaveBlockResult.Saved
-        assertEquals(Block("generated-1", "Redes", linkedSetOf(instagram.packageName), defaultRule, position = 0, enabled = true), saved.block)
+        assertEquals(
+            Block(
+                "generated-1",
+                "Redes",
+                linkedSetOf(instagram.packageName),
+                defaultRule,
+                position = 0,
+                enabled = true,
+                joinedAtMillisByPackage = mapOf(instagram.packageName to saveTimeMillis),
+            ),
+            saved.block,
+        )
         assertEquals(listOf(saved.block), repository.getBlocks())
+        assertEquals(1, repository.writes.size)
+    }
+
+    @Test
+    fun `create stamps every package with the save time`() = runTest {
+        val repository = FakeBlockRepository()
+
+        val result = saveBlockOver(repository)(draft(packageNames = listOf(instagram.packageName, x.packageName)))
+
+        val saved = result as SaveBlockResult.Saved
+        assertEquals(
+            mapOf(instagram.packageName to saveTimeMillis, x.packageName to saveTimeMillis),
+            saved.block.joinedAtMillisByPackage,
+        )
+        assertEquals(saved.block, repository.getBlocks().single())
+    }
+
+    @Test
+    fun `edit stamps only added packages, keeps existing stamps and drops removed ones`() = runTest {
+        val existing = block("B1", instagram.packageName, x.packageName).copy(
+            joinedAtMillisByPackage = mapOf(instagram.packageName to 100L, x.packageName to 200L),
+        )
+        val repository = FakeBlockRepository(listOf(existing))
+
+        val result = saveBlockOver(repository)(
+            draft(id = "B1", packageNames = listOf(instagram.packageName, tiktok.packageName)),
+        )
+
+        val saved = result as SaveBlockResult.Saved
+        assertEquals(
+            mapOf(instagram.packageName to 100L, tiktok.packageName to saveTimeMillis),
+            saved.block.joinedAtMillisByPackage,
+        )
+    }
+
+    @Test
+    fun `edit keeps a legacy package without a stamp unstamped`() = runTest {
+        val repository = FakeBlockRepository(listOf(block("B1", instagram.packageName)))
+
+        val result = saveBlockOver(repository)(
+            draft(id = "B1", packageNames = listOf(instagram.packageName, x.packageName)),
+        )
+
+        val saved = result as SaveBlockResult.Saved
+        assertEquals(mapOf(x.packageName to saveTimeMillis), saved.block.joinedAtMillisByPackage)
+    }
+
+    @Test
+    fun `moving an app stamps it in the target and drops it from the source in one write`() = runTest {
+        val source = block("B1", instagram.packageName, x.packageName).copy(
+            joinedAtMillisByPackage = mapOf(instagram.packageName to 100L, x.packageName to 200L),
+        )
+        val repository = FakeBlockRepository(listOf(source))
+
+        val result = saveBlockOver(repository)(
+            draft(packageNames = listOf(instagram.packageName)),
+            confirmedMovePackages = setOf(instagram.packageName),
+        )
+
+        val saved = result as SaveBlockResult.Saved
+        assertEquals(mapOf(instagram.packageName to saveTimeMillis), saved.block.joinedAtMillisByPackage)
+        val storedSource = repository.getBlocks().single { it.id == "B1" }
+        assertEquals(mapOf(x.packageName to 200L), storedSource.joinedAtMillisByPackage)
         assertEquals(1, repository.writes.size)
     }
 
@@ -399,6 +477,7 @@ class SaveBlockUseCaseTest {
 
         val saved = result as SaveBlockResult.Saved
         val expectedTarget = block("B1", instagram.packageName, x.packageName, tiktok.packageName, name = "Redes")
+            .copy(joinedAtMillisByPackage = mapOf(x.packageName to saveTimeMillis, tiktok.packageName to saveTimeMillis))
         assertEquals(listOf(expectedTarget, block("B2", "k")), repository.getBlocks())
         assertEquals(
             listOf(instagram.packageName, x.packageName, tiktok.packageName),

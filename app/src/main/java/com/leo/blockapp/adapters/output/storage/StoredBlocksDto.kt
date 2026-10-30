@@ -19,6 +19,8 @@ internal data class BlockDto(
     val rule: BlockRuleDto,
     val position: Long,
     val enabled: Boolean,
+    /** Optional: absent in blobs written before phase 3 (schema version stays 1). */
+    val joinedAtMillisByPackage: Map<String, Long> = emptyMap(),
 )
 
 @Serializable
