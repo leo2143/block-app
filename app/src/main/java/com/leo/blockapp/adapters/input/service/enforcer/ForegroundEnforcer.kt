@@ -48,10 +48,13 @@ import kotlinx.coroutines.launch
  *   screen in front; other windows of this app and a usage reading of this app never do.
  * - With usage unreadable, a departure check or a tick ends the loop when no window of the target is on screen.
  * - A visibility-only start (no usage reading of the app) never runs while usage reports the launcher or this app,
- *   and needs the app visible on two checks [EnforcerTiming.visibilityConfirmMillis] apart.
+ *   and needs the app visible on two checks [EnforcerTiming.visibilityConfirmMillis] apart. The "two sightings" guard
+ *   is best-effort: the checks are not strictly time-spaced.
  * - The home fallback re-checks that the device is still unlocked before acting.
  * - Accepted gap of this phase: a picture-in-picture window of a blocked app counts as a visible window of that app
  *   and is not blocked separately.
+ * - Accepted gap of this phase: when usage reports the launcher or this app in one split-screen pane, an enforced app
+ *   in the other pane is only followed after its own next window event; accepted for phase 3 (verify on device).
  * - Fail-closed memory is in process only: the last known restrictions are lost when the service restarts, so spec
  *   F4 fail-closed is guaranteed only for restrictions seen in the current process. After a restart plus a storage
  *   failure there is no last-known restriction and the tick is skipped.
