@@ -5,6 +5,7 @@ import com.leo.blockapp.domain.model.BlockReason
 import com.leo.blockapp.domain.model.ForegroundApp
 import com.leo.blockapp.domain.model.ForegroundAppVerdict
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -34,12 +35,17 @@ class ForegroundEnforcerTest {
         val enforced = FakeObserveEnforcedPackages()
         val launcher = RecordingBlockScreenLauncher()
         val screen = FakeScreenState()
+        val visibility = FakeWindowVisibility()
+        var filterFailure: Throwable? = null
         val failureMessages = mutableListOf<String>()
         val launchablePackages = mutableSetOf(instagram, x, whatsapp)
 
         private val filter = ForegroundFilter(
             ownPackage = ownPackage,
-            inputMethodPackages = { emptySet() },
+            inputMethodPackages = {
+                filterFailure?.let { throw it }
+                emptySet()
+            },
             launcherPackages = { setOf(launcherPackage) },
             hasLauncherIcon = { it in launchablePackages },
         )
@@ -52,6 +58,7 @@ class ForegroundEnforcerTest {
             filter = filter,
             blockScreenLauncher = launcher,
             screenState = screen,
+            windowVisibility = visibility,
             nowMillis = { baseTimeMillis + testScope.testScheduler.currentTime },
             logFailure = { message, _ -> failureMessages += message },
         )
@@ -699,6 +706,219 @@ class ForegroundEnforcerTest {
         passTicks(1)
 
         assertEquals(listOf(Call(instagram, 1_234), Call(instagram, 1_234)), harness.evaluate.calls)
+    }
+
+    // --- Split screen ---
+
+    @Test
+    fun `a blocked app still visible in split screen keeps the loop and keeps blocking`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+        harness.enforcer.onWindowChanged(ownPackage)
+
+        harness.visibility.visiblePackages += instagram
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        passTicks(2)
+
+        assertEquals(3, harness.evaluate.calls.size)
+        assertEquals(listOf(instagram, instagram, instagram), harness.launcher.launches)
+    }
+
+    @Test
+    fun `a window event of the other pane does not end the loop of the visible app`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.visibility.visiblePackages += instagram
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.enforcer.onWindowChanged(whatsapp)
+        runCurrent()
+        passTicks(2)
+
+        assertEquals(3, harness.evaluate.calls.size)
+    }
+
+    @Test
+    fun `a normal departure with the app not visible still stops the loop`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        passTicks(3)
+
+        assertEquals(1, harness.evaluate.calls.size)
+    }
+
+    @Test
+    fun `a failing visibility check counts as not visible`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.visibility.failure = IllegalStateException("windows unavailable")
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        passTicks(3)
+
+        assertEquals(1, harness.evaluate.calls.size)
+        assertTrue(harness.failureMessages.isNotEmpty())
+    }
+
+    // --- Swallowed and transient events ---
+
+    @Test
+    fun `a transient event while idle recovers a restricted app that is actually in front`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+
+        harness.enforcer.onWindowChanged(statusBar)
+        runCurrent()
+
+        assertEquals(listOf(Call(instagram, 1_234)), harness.evaluate.calls)
+        assertEquals(listOf(instagram), harness.launcher.launches)
+    }
+
+    @Test
+    fun `several transient events while idle share one re-evaluation`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(whatsapp, 1_234)
+        val queriesBefore = harness.foreground.queries
+
+        harness.enforcer.onWindowChanged(statusBar)
+        harness.enforcer.onWindowChanged(statusBar)
+        harness.enforcer.onWindowChanged(chooser)
+        runCurrent()
+
+        assertEquals(queriesBefore + 1, harness.foreground.queries)
+    }
+
+    // --- Stale snapshot race ---
+
+    @Test
+    fun `a stale foreground snapshot does not replace the loop of an app that arrived meanwhile`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { if (it == instagram) harness.restricted() else ForegroundAppVerdict.Allowed("B1", 60_000) }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.foreground.onNextQuery = { delay(100) }
+        harness.enforcer.onDeviceAwake()
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(x, 5_000)
+        harness.enforcer.onWindowChanged(x)
+        runCurrent()
+        advanceTimeBy(200)
+        runCurrent()
+        passTicks(1)
+
+        assertTrue(harness.launcher.launches.isEmpty())
+        assertTrue(harness.evaluate.calls.all { it.packageName == x })
+    }
+
+    // --- Home fallback confirmation ---
+
+    @Test
+    fun `the home fallback does not fire when the user already left to a not enforced app`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(0, harness.launcher.homeCount)
+    }
+
+    @Test
+    fun `the home fallback does not fire when the block screen is already in front`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(ownPackage, 8_000)
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(0, harness.launcher.homeCount)
+    }
+
+    @Test
+    fun `the home fallback still fires when the foreground cannot be read but the app is visible`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = null
+        harness.visibility.visiblePackages += instagram
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(1, harness.launcher.homeCount)
+    }
+
+    @Test
+    fun `a departure to another app cancels the pending home fallback`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.enforcer.onWindowChanged(whatsapp)
+        runCurrent()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(0, harness.launcher.homeCount)
+    }
+
+    // --- Filter failures ---
+
+    @Test
+    fun `a filter that throws on a window event is logged and does not crash`() = runTest {
+        val harness = harness()
+        harness.filterFailure = IllegalStateException("package manager died")
+
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        assertTrue(harness.failureMessages.isNotEmpty())
+        assertTrue(harness.evaluate.calls.isEmpty())
+    }
+
+    @Test
+    fun `a filter that throws during a tick is logged and the loop continues`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.filterFailure = IllegalStateException("package manager died")
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        passTicks(1)
+        assertTrue(harness.failureMessages.isNotEmpty())
+        assertEquals(1, harness.evaluate.calls.size)
+
+        harness.filterFailure = null
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        passTicks(1)
+        assertEquals(2, harness.evaluate.calls.size)
     }
 
     // --- Start race (F3) ---

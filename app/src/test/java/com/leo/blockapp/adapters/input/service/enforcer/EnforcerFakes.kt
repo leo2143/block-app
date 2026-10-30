@@ -29,10 +29,18 @@ class FakeGetForegroundPackage : GetForegroundPackage {
     var failure: Throwable? = null
     var queries = 0
 
+    /** Runs once after the snapshot is taken, so a test can let the world change while the read is pending. */
+    var onNextQuery: (suspend () -> Unit)? = null
+
     override suspend fun invoke(): ForegroundApp? {
         queries++
         failure?.let { throw it }
-        return app
+        val snapshot = app
+        onNextQuery?.let {
+            onNextQuery = null
+            it()
+        }
+        return snapshot
     }
 }
 
@@ -61,6 +69,16 @@ class RecordingBlockScreenLauncher : BlockScreenLauncher {
 
     override fun goHome() {
         homeCount++
+    }
+}
+
+class FakeWindowVisibility : WindowVisibility {
+    val visiblePackages = mutableSetOf<String>()
+    var failure: Throwable? = null
+
+    override fun isPackageVisible(packageName: String): Boolean {
+        failure?.let { throw it }
+        return packageName in visiblePackages
     }
 }
 

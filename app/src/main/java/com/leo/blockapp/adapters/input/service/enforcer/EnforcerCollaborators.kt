@@ -23,3 +23,8 @@ data class EnforcerTiming(
     val retryInitialMillis: Long = 1_000,
     val retryMaxMillis: Long = 30_000,
 )
+
+/** Whether a window of an app is on screen right now, even if it is not the latest app the user touched. */
+fun interface WindowVisibility {
+    fun isPackageVisible(packageName: String): Boolean
+}

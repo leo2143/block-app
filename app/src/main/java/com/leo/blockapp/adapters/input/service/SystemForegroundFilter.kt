@@ -9,6 +9,9 @@ import com.leo.blockapp.adapters.input.service.enforcer.ForegroundFilter
 /**
  * Android glue: builds the [ForegroundFilter] from what the system says about keyboards, launchers and launcher
  * icons. It needs the queries entries of the manifest (HOME, InputMethod and LAUNCHER intents) to see them.
+ *
+ * Only the current default launcher counts as a launcher. `queryIntentActivities(HOME)` would list every package that
+ * can act as home (AOSP Settings `FallbackHome`, for one), and those would never be enforced and would end loops.
  */
 fun createSystemForegroundFilter(context: Context): ForegroundFilter {
     val packageManager = context.packageManager
@@ -19,9 +22,10 @@ fun createSystemForegroundFilter(context: Context): ForegroundFilter {
         ownPackage = context.packageName,
         inputMethodPackages = { inputMethodManager.enabledInputMethodList.map { it.packageName }.toSet() },
         launcherPackages = {
-            packageManager.queryIntentActivities(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)
-                .map { it.activityInfo.packageName }
-                .toSet()
+            val defaultHome = packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName
+            // "android" is the resolver/chooser answer when no default launcher is set; it is not a launcher.
+            setOfNotNull(defaultHome?.takeIf { it != "android" })
         },
         hasLauncherIcon = { packageManager.getLaunchIntentForPackage(it) != null },
     )
