@@ -134,16 +134,16 @@ class BlockStatusResolverTest {
 
     @Test
     fun `a paused block keeps its hold and its live name`() {
-        val paused = block("B1", "Social", instagram).copy(enabled = false)
+        val paused = block("B1", "Live name", instagram).copy(enabled = false)
 
         val result = BlockStatusResolver.resolve(
             packageName = instagram,
             blocks = listOf(paused),
-            states = mapOf("B1" to cooldownState(now + minute, "Social", instagram)),
+            states = mapOf("B1" to cooldownState(now + minute, "Stored name", instagram)),
             nowMillis = now,
         )
 
-        assertEquals(BlockScreenState.Active("Social", now + minute, minute, BlockReason.COOLDOWN), result)
+        assertEquals(BlockScreenState.Active("Live name", now + minute, minute, BlockReason.COOLDOWN), result)
     }
 
     @Test
@@ -173,6 +173,34 @@ class BlockStatusResolverTest {
             BlockScreenState.Active("Second", winner.untilMillis, winner.untilMillis - now, winner.reason),
             result,
         )
+    }
+
+    @Test
+    fun `X9 an equal until picks the COOLDOWN hold over the DAILY_CAP hold`() {
+        val until = now + 30 * minute
+        val states = mapOf(
+            "B1" to capState(until, "Cap block", instagram),
+            "B2" to cooldownState(until, "Cooldown block", instagram),
+        )
+        val blocks = listOf(block("B1", "Cap block", instagram), block("B2", "Cooldown block", instagram))
+
+        val result = BlockStatusResolver.resolve(instagram, blocks, states, now)
+
+        assertEquals(BlockScreenState.Active("Cooldown block", until, 30 * minute, BlockReason.COOLDOWN), result)
+    }
+
+    @Test
+    fun `X9 an equal until and reason picks the lowest block id`() {
+        val until = now + 30 * minute
+        val states = mapOf(
+            "B2" to cooldownState(until, "Second", instagram),
+            "B1" to cooldownState(until, "First", instagram),
+        )
+        val blocks = listOf(block("B2", "Second", instagram), block("B1", "First", instagram))
+
+        val result = BlockStatusResolver.resolve(instagram, blocks, states, now)
+
+        assertEquals(BlockScreenState.Active("First", until, 30 * minute, BlockReason.COOLDOWN), result)
     }
 
     @Test

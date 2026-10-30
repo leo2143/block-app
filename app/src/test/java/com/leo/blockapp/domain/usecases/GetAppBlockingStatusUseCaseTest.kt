@@ -114,21 +114,113 @@ class GetAppBlockingStatusUseCaseTest {
 
     @Test
     fun `parity a Restricted verdict yields the same until and reason on the block screen`() = runTest {
-        val limitRule = rule.copy(usageLimitMinutes = 10)
-        val blocks = listOf(block("B1", "Social", instagram).copy(rule = limitRule))
-        val blockRepository = FakeBlockRepository(blocks)
+        val blockRepository = FakeBlockRepository(listOf(block("B1", "Social", instagram)))
         val stateRepository = FakeBlockStateRepository()
-        val usage = FakeUsageEventSource(
-            listOf(UsageEvent(instagram, "Main", UsageEventType.MOVED_TO_FOREGROUND, now - 15 * minute)),
-        )
-        val verdict = EvaluateForegroundAppUseCase(blockRepository, stateRepository, usage, clock)(instagram, now)
-        val restricted = verdict as ForegroundAppVerdict.Restricted
 
-        val status = GetAppBlockingStatusUseCase(blockRepository, stateRepository, clock)(instagram)
+        val restricted = evaluate(blockRepository, stateRepository) as ForegroundAppVerdict.Restricted
 
+        assertEquals(now + 60 * minute, restricted.untilMillis)
+        assertEquals(BlockReason.COOLDOWN, restricted.reason)
         assertEquals(
-            BlockScreenState.Active("Social", restricted.untilMillis, restricted.untilMillis - now, restricted.reason),
-            status,
+            BlockScreenState.Active("Social", now + 60 * minute, 60 * minute, BlockReason.COOLDOWN),
+            status(blockRepository, stateRepository),
         )
     }
+
+    @Test
+    fun `parity a DAILY_CAP Restricted verdict yields the same until and reason on the block screen`() = runTest {
+        val midnight = startOfToday + day
+        val capHold = BlockState.initial("Social", startOfToday).copy(
+            cyclesToday = 3,
+            holdUntilMillis = midnight,
+            holdReason = BlockReason.DAILY_CAP,
+            holdPackageNames = setOf(instagram),
+        )
+        val blockRepository = FakeBlockRepository(listOf(block("B1", "Social", instagram)))
+        val stateRepository = FakeBlockStateRepository(mapOf("B1" to capHold))
+
+        val restricted = evaluate(blockRepository, stateRepository) as ForegroundAppVerdict.Restricted
+
+        assertEquals(midnight, restricted.untilMillis)
+        assertEquals(BlockReason.DAILY_CAP, restricted.reason)
+        assertEquals(
+            BlockScreenState.Active("Social", midnight, midnight - now, BlockReason.DAILY_CAP),
+            status(blockRepository, stateRepository),
+        )
+    }
+
+    @Test
+    fun `parity a running cooldown re-evaluated on a later tick keeps the same until and a shorter remaining time`() =
+        runTest {
+            val blockRepository = FakeBlockRepository(listOf(block("B1", "Social", instagram)))
+            val stateRepository = FakeBlockStateRepository()
+            evaluate(blockRepository, stateRepository)
+
+            clock.nowMillis = now + 20 * minute
+            val later = evaluate(blockRepository, stateRepository, since = clock.nowMillis)
+                as ForegroundAppVerdict.Restricted
+
+            assertEquals(now + 60 * minute, later.untilMillis)
+            assertEquals(
+                BlockScreenState.Active("Social", now + 60 * minute, 40 * minute, BlockReason.COOLDOWN),
+                status(blockRepository, stateRepository),
+            )
+        }
+
+    @Test
+    fun `parity an Allowed verdict is inactive on the block screen`() = runTest {
+        val blockRepository = FakeBlockRepository(listOf(block("B1", "Social", instagram)))
+        val stateRepository = FakeBlockStateRepository()
+
+        val verdict = evaluate(blockRepository, stateRepository, usedMinutes = 4)
+
+        assertEquals(ForegroundAppVerdict.Allowed("B1", 6 * minute), verdict)
+        assertEquals(BlockScreenState.Inactive, status(blockRepository, stateRepository))
+    }
+
+    @Test
+    fun `parity a paused block keeps the hold and shows its live name while the stored one differs`() = runTest {
+        val stateRepository = FakeBlockStateRepository()
+        evaluate(FakeBlockRepository(listOf(block("B1", "Stored name", instagram))), stateRepository)
+        val paused = FakeBlockRepository(listOf(block("B1", "Live name", instagram).copy(enabled = false)))
+
+        val verdict = evaluate(paused, stateRepository)
+
+        assertEquals(ForegroundAppVerdict.Restricted("B1", now + 60 * minute, BlockReason.COOLDOWN), verdict)
+        assertEquals(
+            BlockScreenState.Active("Live name", now + 60 * minute, 60 * minute, BlockReason.COOLDOWN),
+            status(paused, stateRepository),
+        )
+    }
+
+    @Test
+    fun `parity a deleted block keeps the hold and shows the stored name`() = runTest {
+        val stateRepository = FakeBlockStateRepository()
+        evaluate(FakeBlockRepository(listOf(block("B1", "Stored name", instagram))), stateRepository)
+        val deleted = FakeBlockRepository()
+
+        val verdict = evaluate(deleted, stateRepository)
+
+        assertEquals(ForegroundAppVerdict.Restricted("B1", now + 60 * minute, BlockReason.COOLDOWN), verdict)
+        assertEquals(
+            BlockScreenState.Active("Stored name", now + 60 * minute, 60 * minute, BlockReason.COOLDOWN),
+            status(deleted, stateRepository),
+        )
+    }
+
+    /** Runs the real evaluation with [usedMinutes] of Instagram usage ending at the current clock. */
+    private suspend fun evaluate(
+        blockRepository: FakeBlockRepository,
+        stateRepository: FakeBlockStateRepository,
+        usedMinutes: Long = 15,
+        since: Long = now,
+    ): ForegroundAppVerdict {
+        val usage = FakeUsageEventSource(
+            listOf(UsageEvent(instagram, "Main", UsageEventType.MOVED_TO_FOREGROUND, now - usedMinutes * minute)),
+        )
+        return EvaluateForegroundAppUseCase(blockRepository, stateRepository, usage, clock)(instagram, since)
+    }
+
+    private suspend fun status(blockRepository: FakeBlockRepository, stateRepository: FakeBlockStateRepository) =
+        GetAppBlockingStatusUseCase(blockRepository, stateRepository, clock)(instagram)
 }
