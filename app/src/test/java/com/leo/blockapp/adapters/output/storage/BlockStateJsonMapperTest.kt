@@ -22,7 +22,7 @@ class BlockStateJsonMapperTest {
 
     private fun decodeStates(stored: String?) = BlockStateJsonMapper.decode(stored).states
 
-    private val minimal =BlockState.initial(blockName = "Idle", startOfTodayMillis = 500L)
+    private val minimal = BlockState.initial(blockName = "Idle", startOfTodayMillis = 500L)
 
     @Test
     fun `round trip keeps every field including nulls and hold packages`() {
