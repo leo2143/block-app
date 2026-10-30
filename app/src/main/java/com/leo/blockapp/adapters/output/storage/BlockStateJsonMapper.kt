@@ -12,11 +12,18 @@ import kotlinx.serialization.json.intOrNull
  *
  * Entries decode independently: a malformed entry drops only itself and the others survive. Null/blank blobs decode to
  * an empty map; a non-blank blob that is undecodable as a whole or has an unsupported schema version also decodes to
- * an empty map but is reported by [isUnreadable], so the repository can back the raw blob up before a write replaces
- * it (the blocker must not silently lose active holds). An unknown hold reason is NOT corruption: it decodes to null
- * and the hold fields are kept (fail-closed, the hold policy derives the cap from a live until).
+ * an empty map. Both cases, and any dropped entry, are flagged as [DecodedStates.isLossy], so the repository can back
+ * the raw blob up before a write replaces it (the blocker must not silently lose active holds). An unknown hold reason
+ * is NOT corruption: it decodes to null and the hold fields are kept (fail-closed, the hold policy derives the cap
+ * from a live until).
  */
 internal object BlockStateJsonMapper {
+
+    /**
+     * Result of [decode]. [isLossy] is true when the stored blob is non-blank and part of it could not be read: the whole
+     * blob (bad JSON or shape), an unsupported schema version, or at least one malformed entry.
+     */
+    data class DecodedStates(val states: Map<String, BlockState>, val isLossy: Boolean)
 
     const val SCHEMA_VERSION = 1
 
@@ -33,21 +40,22 @@ internal object BlockStateJsonMapper {
         return json.encodeToString(StoredBlockStatesDto.serializer(), dto)
     }
 
-    /** True when [stored] is a non-blank blob that cannot be read as a whole (bad JSON, bad shape or unsupported schema). */
-    fun isUnreadable(stored: String?): Boolean = !stored.isNullOrBlank() && readStatesObject(stored) == null
-
-    fun decode(stored: String?): Map<String, BlockState> {
-        if (stored.isNullOrBlank()) return emptyMap()
-        val statesObject = readStatesObject(stored) ?: return emptyMap()
-        return statesObject.mapNotNull { (id, element) ->
+    /** Decodes [stored] in a single pass; see [DecodedStates.isLossy] for when the result dropped stored data. */
+    fun decode(stored: String?): DecodedStates {
+        if (stored.isNullOrBlank()) return DecodedStates(emptyMap(), isLossy = false)
+        val statesObject = readStatesObject(stored) ?: return DecodedStates(emptyMap(), isLossy = true)
+        var droppedEntry = false
+        val states = statesObject.mapNotNull { (id, element) ->
             val dto = try {
                 json.decodeFromJsonElement(BlockStateDto.serializer(), element)
             } catch (_: IllegalArgumentException) {
                 // A malformed entry is dropped alone; SerializationException extends IllegalArgumentException.
+                droppedEntry = true
                 return@mapNotNull null
             }
             id to dto.toDomain()
         }.toMap()
+        return DecodedStates(states, isLossy = droppedEntry)
     }
 
     /** The `states` object of a readable blob with the supported schema version, or null when the blob is unreadable. */

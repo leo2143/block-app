@@ -20,13 +20,15 @@ class BlockStateJsonMapperTest {
         blockName = "Social",
     )
 
-    private val minimal = BlockState.initial(blockName = "Idle", startOfTodayMillis = 500L)
+    private fun decodeStates(stored: String?) = BlockStateJsonMapper.decode(stored).states
+
+    private val minimal =BlockState.initial(blockName = "Idle", startOfTodayMillis = 500L)
 
     @Test
     fun `round trip keeps every field including nulls and hold packages`() {
         val states = mapOf("B1" to full, "B2" to minimal)
 
-        val decoded = BlockStateJsonMapper.decode(BlockStateJsonMapper.encode(states))
+        val decoded = decodeStates(BlockStateJsonMapper.encode(states))
 
         assertEquals(states, decoded)
         assertEquals(null, decoded.getValue("B2").cooldownEndMillis)
@@ -42,12 +44,12 @@ class BlockStateJsonMapperTest {
             "B2" to full.copy(holdReason = BlockReason.DAILY_CAP),
         )
 
-        assertEquals(states, BlockStateJsonMapper.decode(BlockStateJsonMapper.encode(states)))
+        assertEquals(states, decodeStates(BlockStateJsonMapper.encode(states)))
     }
 
     @Test
     fun `an empty map round trips`() {
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(BlockStateJsonMapper.encode(emptyMap())))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates(BlockStateJsonMapper.encode(emptyMap())))
     }
 
     @Test
@@ -57,31 +59,31 @@ class BlockStateJsonMapperTest {
 
     @Test
     fun `null and blank blobs decode to an empty map`() {
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(null))
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(""))
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode("   "))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates(null))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates(""))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates("   "))
     }
 
     @Test
     fun `undecodable json decodes to an empty map`() {
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode("{not json"))
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode("[]"))
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode("""{"schemaVersion":1}"""))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates("{not json"))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates("[]"))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates("""{"schemaVersion":1}"""))
     }
 
     @Test
     fun `an unknown newer schema version decodes to an empty map`() {
         val newer = BlockStateJsonMapper.encode(mapOf("B1" to full)).replace("\"schemaVersion\":1", "\"schemaVersion\":2")
 
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(newer))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates(newer))
     }
 
     @Test
     fun `a zero or negative schema version decodes to an empty map`() {
         val encoded = BlockStateJsonMapper.encode(mapOf("B1" to full))
 
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":0")))
-        assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":-1")))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":0")))
+        assertEquals(emptyMap<String, BlockState>(), decodeStates(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":-1")))
     }
 
     @Test
@@ -93,23 +95,25 @@ class BlockStateJsonMapperTest {
             "B3":{"cycleStartMillis":1,"cyclesToday":2,"cyclesDayStartMillis":1,"blockName":"C"}}}
         """.trimIndent()
 
-        val decoded = BlockStateJsonMapper.decode(blob)
+        val decoded = decodeStates(blob)
 
         assertEquals(setOf("B1", "B3"), decoded.keys)
         assertEquals(2, decoded.getValue("B3").cyclesToday)
     }
 
     @Test
-    fun `only a non blank blob that cannot be read as a whole is unreadable`() {
+    fun `a blob is lossy when it is non blank and unreadable as a whole or has a dropped entry`() {
         val encoded = BlockStateJsonMapper.encode(mapOf("B1" to full))
+        val withMalformedEntry = """{"schemaVersion":1,"states":{"BAD":{"cycleStartMillis":"oops"}}}"""
 
-        assertFalse(BlockStateJsonMapper.isUnreadable(null))
-        assertFalse(BlockStateJsonMapper.isUnreadable("  "))
-        assertFalse(BlockStateJsonMapper.isUnreadable(encoded))
-        assertTrue(BlockStateJsonMapper.isUnreadable("{not json"))
-        assertTrue(BlockStateJsonMapper.isUnreadable("[]"))
-        assertTrue(BlockStateJsonMapper.isUnreadable("""{"schemaVersion":1}"""))
-        assertTrue(BlockStateJsonMapper.isUnreadable(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":2")))
+        assertFalse(BlockStateJsonMapper.decode(null).isLossy)
+        assertFalse(BlockStateJsonMapper.decode("  ").isLossy)
+        assertFalse(BlockStateJsonMapper.decode(encoded).isLossy)
+        assertTrue(BlockStateJsonMapper.decode("{not json").isLossy)
+        assertTrue(BlockStateJsonMapper.decode("[]").isLossy)
+        assertTrue(BlockStateJsonMapper.decode("""{"schemaVersion":1}""").isLossy)
+        assertTrue(BlockStateJsonMapper.decode(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":2")).isLossy)
+        assertTrue(BlockStateJsonMapper.decode(withMalformedEntry).isLossy)
     }
 
     @Test
@@ -121,7 +125,7 @@ class BlockStateJsonMapperTest {
 
         assertEquals(
             mapOf("B1" to BlockState(1L, null, 0, 1L, null, null, emptySet(), "A")),
-            BlockStateJsonMapper.decode(blob),
+            decodeStates(blob),
         )
     }
 
@@ -133,7 +137,7 @@ class BlockStateJsonMapperTest {
             "holdUntilMillis":9000,"holdReason":"SOMETHING_NEW","holdPackageNames":["a","b"],"blockName":"A"}}}
         """.trimIndent()
 
-        val decoded = BlockStateJsonMapper.decode(blob).getValue("B1")
+        val decoded = decodeStates(blob).getValue("B1")
 
         assertEquals(null, decoded.holdReason)
         assertEquals(9_000L, decoded.holdUntilMillis)
@@ -148,7 +152,7 @@ class BlockStateJsonMapperTest {
             "holdUntilMillis":9000,"holdPackageNames":["a"],"blockName":"A"}}}
         """.trimIndent()
 
-        val decoded = BlockStateJsonMapper.decode(blob).getValue("B1")
+        val decoded = decodeStates(blob).getValue("B1")
 
         assertEquals(null, decoded.holdReason)
         assertEquals(9_000L, decoded.holdUntilMillis)

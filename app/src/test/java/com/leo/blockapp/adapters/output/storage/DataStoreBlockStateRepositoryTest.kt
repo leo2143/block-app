@@ -116,6 +116,18 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
     }
 
     @Test
+    fun `observeStates retries after the base delay when failures are separated by successful emissions`() = runTest {
+        val dataStore = FlakyDataStore { testScheduler.currentTime }
+        val repository = DataStoreBlockStateRepository(dataStore)
+        backgroundScope.launch { repository.observeStates().collect { } }
+
+        advanceTimeBy(4_501L)
+
+        // Every collection emits before failing, so the backoff must restart from the base delay each time.
+        assertEquals((0L..9L).map { it * 500L }, dataStore.collectionStartTimes)
+    }
+
+    @Test
     fun `observeStates never emits an empty map when a read IOException interrupts the stream`() = runTest {
         val before = BlockStateJsonMapper.encode(mapOf("B1" to state("One")))
         val after = BlockStateJsonMapper.encode(mapOf("B1" to state("One"), "B2" to state("Two")))
@@ -171,6 +183,23 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
     }
 
     @Test
+    fun `an update on a blob with one malformed entry backs up the raw blob and keeps the good entries`() = runTest {
+        val raw = """
+            {"schemaVersion":1,"states":{
+            "B1":{"cycleStartMillis":1,"cyclesToday":0,"cyclesDayStartMillis":1,"blockName":"A"},
+            "BAD":{"cycleStartMillis":"oops","blockName":"B"}}}
+        """.trimIndent()
+        val dataStore = BlocksDataStoreFactory.create(ioScope) { statesFile() }
+        dataStore.edit { it[DataStoreBlockStateRepository.STATES_KEY] = raw }
+        val repository = DataStoreBlockStateRepository(dataStore)
+
+        repository.update { BlockStateUpdate(upserts = mapOf("B2" to state("Two")), result = Unit) }
+
+        assertEquals(raw, dataStore.data.first()[DataStoreBlockStateRepository.UNREADABLE_BACKUP_KEY])
+        assertEquals(setOf("B1", "B2"), repository.observeStates().first().keys)
+    }
+
+    @Test
     fun `an update on readable state writes no backup`() = runTest {
         val dataStore = BlocksDataStoreFactory.create(ioScope) { statesFile() }
         val repository = DataStoreBlockStateRepository(dataStore)
@@ -183,7 +212,7 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
 
     @Test
     fun `a read IOException inside update propagates and the transform never runs`() = runTest {
-        val repository = DataStoreBlockStateRepository(FakePreferencesDataStore(updateReadFailure = IOException("read failed")))
+        val repository = DataStoreBlockStateRepository(FakePreferencesDataStore(readFailure = IOException("read failed")))
         var transformRuns = 0
 
         val thrown = assertThrows(IOException::class.java) {
@@ -379,11 +408,28 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
             transform(afterPreferences)
     }
 
-    /** A [DataStore] stub whose reads and/or writes fail, to exercise the adapter's error handling. */
+    /** A [DataStore] whose every collection emits a value and then fails with an IOException, recording virtual start times. */
+    private class FlakyDataStore(private val currentTimeMillis: () -> Long) : DataStore<Preferences> {
+
+        val collectionStartTimes = mutableListOf<Long>()
+
+        override val data: Flow<Preferences> = flow {
+            collectionStartTimes += currentTimeMillis()
+            emit(emptyPreferences())
+            throw IOException("read failed")
+        }
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            transform(emptyPreferences())
+    }
+
+    /**
+     * A [DataStore] stub whose reads and/or writes fail, to exercise the adapter's error handling. Like the real
+     * DataStore, [updateData] reads the current data first, so a read failure surfaces before the transform runs.
+     */
     private class FakePreferencesDataStore(
         private val readFailure: Throwable? = null,
         private val writeFailure: Throwable? = null,
-        private val updateReadFailure: Throwable? = null,
     ) : DataStore<Preferences> {
 
         var dataCollections = 0
@@ -400,9 +446,9 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
             }
 
         override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
-            updateReadFailure?.let { throw it }
+            val current = data.first()
             writeFailure?.let { throw it }
-            return transform(emptyPreferences())
+            return transform(current)
         }
     }
 }

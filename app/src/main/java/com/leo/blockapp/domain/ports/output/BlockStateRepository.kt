@@ -5,10 +5,16 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Output port: enforcement state storage, keyed by block id. The only write path is [update]; there is no
- * `getState`, so reads go through `observeStates().first()` or happen inside [update].
+ * `getState`. Point-in-time reads and decisions must happen inside [update], which propagates an IOException so callers
+ * can fail closed.
  */
 interface BlockStateRepository {
-    /** Emits the full id-to-state map on every change. */
+    /**
+     * Emits the full id-to-state map on every change. It is for observing only: while storage is unreadable it may not
+     * emit at all (it never emits an empty map and never errors on an IOException), and it keeps the last value across
+     * outages, so a caller must not wait on it for a point-in-time read. A stored blob that is unreadable as a whole
+     * observes as an empty map until the next [update].
+     */
     fun observeStates(): Flow<Map<String, BlockState>>
 
     /**
