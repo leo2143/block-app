@@ -24,7 +24,11 @@ data class EnforcerTiming(
     val retryMaxMillis: Long = 30_000,
 )
 
-/** Whether a window of an app is on screen right now, even if it is not the latest app the user touched. */
-fun interface WindowVisibility {
+/** Which apps have a window on screen right now, even if they are not the latest app the user touched. */
+interface WindowVisibility {
+    /** Whether an application window of [packageName] is on screen. */
     fun isPackageVisible(packageName: String): Boolean
+
+    /** The packages of every application window on screen (split screen, freeform). */
+    fun visibleApplicationPackages(): Set<String>
 }

@@ -39,7 +39,13 @@ import kotlinx.coroutines.launch
  *   enforced.
  * - A transient window (keyboard, system UI) while no loop runs triggers one coalesced re-evaluation, so a window
  *   event of an app that was swallowed by the overlay is recovered. A foreground snapshot that was read before a loop
- *   started or stopped is discarded, and the home fallback re-reads the foreground before acting.
+ *   started or stopped is discarded (departure checks included, and they are coalesced too), and the home fallback
+ *   re-reads the foreground before acting. An unreadable foreground counts as "still in front" there (fail closed).
+ * - Every re-evaluation (start, wake, enforced-set update, swallowed event) also looks at the enforced apps visible
+ *   through [WindowVisibility], so an enforced app restored in the non-focused pane of a split screen is followed.
+ * - If the block screen is already in front, a Restricted tick does not launch it again.
+ * - Accepted gap of this phase: a picture-in-picture window of a blocked app counts as a visible window of that app
+ *   and is not blocked separately.
  * - Fail-closed memory is in process only: the last known restrictions are lost when the service restarts, so spec
  *   F4 fail-closed is guaranteed only for restrictions seen in the current process. After a restart plus a storage
  *   failure there is no last-known restriction and the tick is skipped.
@@ -72,6 +78,8 @@ class ForegroundEnforcer(
     /** Bumped whenever a loop starts, stops or changes target; lets a suspended read detect it is stale. */
     private var loopGeneration = 0
     private var pendingReevaluationJob: Job? = null
+    private var departureCheckJob: Job? = null
+    private var departureRecheckRequested = false
 
     private var confirmationJob: Job? = null
     private var blockScreenConfirmed = false
@@ -88,6 +96,7 @@ class ForegroundEnforcer(
 
     fun stop() {
         observerJob?.cancel()
+        departureCheckJob?.cancel()
         stopLoop()
         loopTarget = null
         lastSeenPackage = null
@@ -123,7 +132,7 @@ class ForegroundEnforcer(
                 if (!isLooping || loopTarget != packageName || previousPackage != packageName) {
                     startLoop(packageName, usageSinceMillis = null)
                 }
-            isLooping -> scope.launch { confirmDeparture() }
+            isLooping -> scheduleDepartureCheck()
             kind == ForegroundKind.APP && !isLaunchable(packageName) -> scheduleReevaluation()
         }
     }
@@ -162,12 +171,33 @@ class ForegroundEnforcer(
     private suspend fun reevaluateForeground() {
         // The read suspends: if a loop was started or stopped meanwhile, the snapshot is older than that decision.
         val generationBeforeRead = loopGeneration
-        val foreground = readForeground() ?: return
+        val foreground = readForeground()
         if (generationBeforeRead != loopGeneration) return
-        if (isLooping && loopTarget == foreground.packageName) return
-        if (isCandidate(foreground.packageName, kindOf(foreground.packageName))) {
-            startLoop(foreground.packageName, foreground.foregroundSinceMillis)
+        if (foreground != null) {
+            if (isLooping && loopTarget == foreground.packageName) return
+            if (isCandidate(foreground.packageName, kindOf(foreground.packageName))) {
+                startLoop(foreground.packageName, foreground.foregroundSinceMillis)
+                return
+            }
         }
+        startLoopForVisibleEnforcedApp()
+    }
+
+    /**
+     * Usage reports only the latest app, so an enforced app restored in the other pane of a split screen (after an
+     * unlock or a service restart) is never reported. Follow it if no loop is running. Only one app is followed at a
+     * time: with two enforced apps side by side the loop later moves to the other one when usage reports it.
+     */
+    private fun startLoopForVisibleEnforcedApp() {
+        if (isLooping) return
+        val visiblePackages = try {
+            windowVisibility.visibleApplicationPackages()
+        } catch (failure: Exception) {
+            logFailure("The windows on screen could not be read", failure)
+            return
+        }
+        val enforcedVisiblePackage = visiblePackages.firstOrNull { isCandidate(it, kindOf(it)) } ?: return
+        startLoop(enforcedVisiblePackage, usageSinceMillis = null)
     }
 
     /** An enforced package, or any launchable app while the enforced set is still unknown. */
@@ -279,10 +309,27 @@ class ForegroundEnforcer(
         return foreground.packageName
     }
 
+    /** Asks for one departure check; while one is reading, further requests make it run once more afterwards. */
+    private fun scheduleDepartureCheck() {
+        if (departureCheckJob?.isActive == true) {
+            departureRecheckRequested = true
+            return
+        }
+        departureCheckJob = scope.launch {
+            do {
+                departureRecheckRequested = false
+                confirmDeparture()
+            } while (departureRecheckRequested)
+        }
+    }
+
     /** A window that is not an enforced app came up: end the loop only if usage confirms the user left. */
     private suspend fun confirmDeparture() {
         val target = loopTarget ?: return
+        // The read suspends: a loop that started, switched or stopped meanwhile makes the snapshot stale.
+        val generationBeforeRead = loopGeneration
         val foreground = readForeground() ?: return
+        if (generationBeforeRead != loopGeneration) return
         if (foreground.packageName == target) return
         when (judge(foreground, target)) {
             Judgement.STOP -> stopLoop()
@@ -318,7 +365,7 @@ class ForegroundEnforcer(
     }
 
     /** Fail closed: a restriction that has not ended keeps blocking even when storage cannot be read. */
-    private fun enforceLastKnownRestriction(target: String): Boolean {
+    private suspend fun enforceLastKnownRestriction(target: String): Boolean {
         val lastRestriction = lastRestrictionByPackage[target]
         return if (lastRestriction != null && lastRestriction.untilMillis > nowMillis()) {
             showBlockScreen(target)
@@ -328,8 +375,16 @@ class ForegroundEnforcer(
     }
 
     /** Launches the block screen and arms the home fallback. Returns false when the device cannot show it now. */
-    private fun showBlockScreen(target: String): Boolean {
+    private suspend fun showBlockScreen(target: String): Boolean {
+        val alreadyShowing = isBlockScreenInFront(target)
+        currentCoroutineContext().ensureActive()
         if (!screenState.isInteractiveAndUnlocked()) return false
+        if (alreadyShowing) {
+            // singleTask would only redeliver the intent without a window event, and the fallback would misfire.
+            blockScreenConfirmed = true
+            cancelConfirmation()
+            return true
+        }
         cancelConfirmation()
         blockScreenConfirmed = false
         try {
@@ -344,11 +399,35 @@ class ForegroundEnforcer(
         return true
     }
 
-    /** The home fallback is only for a target the user still sees; the foreground may have changed in 1.5 s. */
+    /**
+     * True when usage reports this app's window as the foreground. Usage lags: while it still reports [target] (or
+     * nothing), the last window event decides, and a confirmed block screen that is the last window seen is in front.
+     * If usage reports some other app, the block screen is not.
+     */
+    private suspend fun isBlockScreenInFront(target: String): Boolean {
+        val foreground = readForeground()
+        if (foreground != null) {
+            if (kindOf(foreground.packageName) == ForegroundKind.OWN_APP) return true
+            if (foreground.packageName != target) return false
+        }
+        val lastSeen = lastSeenPackage
+        return blockScreenConfirmed && lastSeen != null && kindOf(lastSeen) == ForegroundKind.OWN_APP
+    }
+
+    /**
+     * The home fallback is only for a target the user still sees; the foreground may have changed in 1.5 s. An
+     * unreadable foreground counts as still in front (fail closed): only a foreground that is positively known to be
+     * this app's block screen or another app releases the target.
+     */
     private suspend fun targetStillInFront(target: String): Boolean {
         val foreground = readForeground()
         currentCoroutineContext().ensureActive()
-        return foreground?.packageName == target || isVisible(target)
+        return when {
+            foreground == null -> true
+            kindOf(foreground.packageName) == ForegroundKind.OWN_APP -> false
+            foreground.packageName == target -> true
+            else -> isVisible(target)
+        }
     }
 
     private fun cancelConfirmation() {

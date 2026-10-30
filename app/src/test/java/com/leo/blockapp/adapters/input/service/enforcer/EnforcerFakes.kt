@@ -80,6 +80,11 @@ class FakeWindowVisibility : WindowVisibility {
         failure?.let { throw it }
         return packageName in visiblePackages
     }
+
+    override fun visibleApplicationPackages(): Set<String> {
+        failure?.let { throw it }
+        return visiblePackages.toSet()
+    }
 }
 
 class FakeScreenState(var interactiveAndUnlocked: Boolean = true) : ScreenState {

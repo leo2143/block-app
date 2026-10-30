@@ -888,6 +888,169 @@ class ForegroundEnforcerTest {
         assertEquals(0, harness.launcher.homeCount)
     }
 
+    @Test
+    fun `an unreadable foreground with an unconfirmed launch counts as still in front and goes home`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = null
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(1, harness.launcher.homeCount)
+    }
+
+    @Test
+    fun `an unreadable foreground and a failing visibility check still go home after an unconfirmed launch`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.failure = IllegalStateException("usage unavailable")
+        harness.visibility.failure = IllegalStateException("windows unavailable")
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(1, harness.launcher.homeCount)
+    }
+
+    @Test
+    fun `the home fallback does not fire when the block screen is in front even if the app is visible`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.visibility.visiblePackages += instagram
+        harness.foreground.app = ForegroundApp(ownPackage, 8_000)
+        advanceTimeBy(1_500)
+        runCurrent()
+
+        assertEquals(0, harness.launcher.homeCount)
+    }
+
+    @Test
+    fun `a restricted tick while the block screen is already in front does not relaunch it or go home`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+        harness.enforcer.onWindowChanged(ownPackage)
+
+        // Usage still lags on the target and the target is visible next to the block screen (split screen).
+        harness.visibility.visiblePackages += instagram
+        passTicks(3)
+
+        assertEquals(listOf(instagram), harness.launcher.launches)
+        assertEquals(0, harness.launcher.homeCount)
+    }
+
+    // --- Split screen at start ---
+
+    @Test
+    fun `an enforced app restored in the other pane is enforced after the device wakes`() = runTest {
+        val harness = harness()
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.visibility.visiblePackages += instagram
+
+        harness.enforcer.onDeviceAwake()
+        runCurrent()
+
+        assertEquals(listOf(instagram), harness.evaluate.calls.map { it.packageName })
+        assertEquals(listOf(instagram), harness.launcher.launches)
+    }
+
+    @Test
+    fun `an enforced app visible in the other pane when the service starts is enforced without any event`() = runTest {
+        val harness = Harness(this)
+        harness.evaluate.verdictFor = { harness.restricted() }
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.visibility.visiblePackages += instagram
+
+        harness.start()
+        runCurrent()
+
+        assertEquals(listOf(instagram), harness.evaluate.calls.map { it.packageName })
+        assertEquals(listOf(instagram), harness.launcher.launches)
+    }
+
+    @Test
+    fun `a visible app that is not enforced is not evaluated`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.visibility.visiblePackages += whatsapp
+
+        harness.enforcer.onDeviceAwake()
+        runCurrent()
+
+        assertTrue(harness.evaluate.calls.isEmpty())
+    }
+
+    @Test
+    fun `a failing window query while looking for a visible enforced app is logged and ignored`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.visibility.failure = IllegalStateException("windows unavailable")
+
+        harness.enforcer.onDeviceAwake()
+        runCurrent()
+
+        assertTrue(harness.evaluate.calls.isEmpty())
+        assertTrue(harness.failureMessages.isNotEmpty())
+    }
+
+    // --- Stale departure snapshot ---
+
+    @Test
+    fun `a stale departure snapshot does not stop a loop that switched to another enforced app meanwhile`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.foreground.onNextQuery = { delay(100) }
+        harness.enforcer.onWindowChanged(whatsapp)
+        runCurrent()
+
+        harness.foreground.app = ForegroundApp(x, 9_000)
+        harness.enforcer.onWindowChanged(x)
+        runCurrent()
+        advanceTimeBy(200)
+        runCurrent()
+        passTicks(1)
+
+        assertEquals(listOf(instagram, x, x), harness.evaluate.calls.map { it.packageName })
+    }
+
+    @Test
+    fun `departure checks that arrive while one is reading share a single extra read`() = runTest {
+        val harness = harness()
+        harness.foreground.app = ForegroundApp(instagram, 1_234)
+        harness.enforcer.onWindowChanged(instagram)
+        runCurrent()
+        val queriesBefore = harness.foreground.queries
+
+        harness.foreground.app = ForegroundApp(whatsapp, 8_000)
+        harness.foreground.onNextQuery = { delay(100) }
+        harness.enforcer.onWindowChanged(whatsapp)
+        runCurrent()
+        harness.enforcer.onWindowChanged(whatsapp)
+        harness.enforcer.onWindowChanged(whatsapp)
+        advanceTimeBy(200)
+        runCurrent()
+
+        assertEquals(queriesBefore + 2, harness.foreground.queries)
+    }
+
     // --- Filter failures ---
 
     @Test
