@@ -533,6 +533,20 @@ class EvaluateForegroundAppUseCaseTest {
     }
 
     @Test
+    fun `an app seeded from the range start that just went to background is not counted twice`() = runTest {
+        clock.nowMillis = startOfToday + 30 * minute
+        val rule = defaultRule.copy(usageLimitMinutes = 45)
+        val harness = Harness(
+            blocks = listOf(block("B1", instagram, rule = rule)),
+            events = listOf(UsageEvent(instagram, "Main", UsageEventType.MOVED_TO_BACKGROUND, clock.nowMillis - 1_000L)),
+        )
+
+        val verdict = harness.evaluate(instagram, foregroundSinceMillis = startOfToday - 20 * minute)
+
+        assertEquals(ForegroundAppVerdict.Allowed("B1", 15 * minute + 1_000L), verdict)
+    }
+
+    @Test
     fun `another package with a stale foreground before the range and no background contributes no usage`() = runTest {
         val harness = Harness(
             blocks = listOf(block("B1", instagram, x)),

@@ -143,7 +143,9 @@ class EvaluateForegroundAppUseCase(
     /**
      * The evaluated package is the current foreground app, so when it came to the foreground before the range and
      * the in-range events show no session open at [nowMillis] (no event since: one screen kept open across midnight
-     * or the start of the lookback window), it has been in use since the range start. Only the package being
+     * or the start of the lookback window), it has been in use since the range start. Nothing is added when a session
+     * of the package already starts at the range start (seeded from a background event) or is open at [nowMillis],
+     * so the same time is never counted twice. Only the package being
      * evaluated is seeded, from evidence of this very tick; a stale foreground of any other package is never counted.
      */
     private fun withOpenSessionSeeded(
@@ -154,8 +156,10 @@ class EvaluateForegroundAppUseCase(
         nowMillis: Long,
     ): List<ForegroundSession> {
         if (foregroundSinceMillis >= rangeStartMillis) return sessions
-        val openAtNow = sessions.any { it.packageName == packageName && it.endMillis >= nowMillis }
-        if (openAtNow) return sessions
+        val alreadyCovered = sessions.any {
+            it.packageName == packageName && (it.startMillis == rangeStartMillis || it.endMillis >= nowMillis)
+        }
+        if (alreadyCovered) return sessions
         return (sessions + ForegroundSession(packageName, rangeStartMillis, nowMillis)).sortedBy { it.startMillis }
     }
 
