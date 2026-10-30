@@ -42,18 +42,23 @@ class ArchitectureTest {
         "com.leo.blockapp.*",
     )
 
-    /** The domain gets "now" from the Clock port, never from the system. */
+    /**
+     * The domain gets "now" from the Clock port, never from the system. Any `<java.time type>.now` is flagged,
+     * including `now(clock)`: the domain must use the Clock port instead.
+     */
     private val forbiddenDomainClockReads = listOf(
         Regex("""(^|[^\w])System\s*\.\s*currentTimeMillis\b"""),
         Regex("""(^|[^\w])System\s*\.\s*nanoTime\b"""),
-        Regex("""(^|[^\w])Instant\s*\.\s*now\s*\("""),
-        Regex("""(^|[^\w])LocalDate\s*\.\s*now\s*\("""),
-        Regex("""(^|[^\w])LocalDateTime\s*\.\s*now\s*\("""),
-        Regex("""(^|[^\w])ZonedDateTime\s*\.\s*now\s*\("""),
-        Regex("""(^|[^\w])Clock\s*\.\s*system\w*"""),
+        Regex(
+            """(^|[^\w])(Instant|LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)""" +
+                """\s*(\.|::)\s*now\b""",
+        ),
+        Regex("""(^|[^\w])Clock\s*\.\s*(?i:system)\w*"""),
         Regex("""(^|[^\w])Calendar\s*\.\s*getInstance\s*\("""),
-        Regex("""^\s*import\s+java\.util\.Date\b"""),
+        Regex("""(^|[^\w])GregorianCalendar\b"""),
+        Regex("""(^|[^\w])TimeSource\b"""),
         Regex("""(^|[^\w])java\.util\.Date\b"""),
+        Regex("""^\s*import\s+java\.util\.\*"""),
     )
 
     /** Any `com.leo.blockapp.` reference (import or fully qualified) that is not in the allowlist. */
@@ -118,6 +123,16 @@ class ArchitectureTest {
             "val e = Clock.systemUTC()",
             "val f = Calendar.getInstance()",
             "import java.util.Date",
+            "val g = Clock.System.now()",
+            "val h = LocalTime.now()",
+            "val i = OffsetDateTime.now()",
+            "val j = Year.now()",
+            "val k = YearMonth.now()",
+            "val l = Instant::now",
+            "val m = ZonedDateTime.now(clock)",
+            "val n = GregorianCalendar()",
+            "val o = TimeSource.Monotonic.markNow()",
+            "import java.util.*",
         )
 
         assertEquals(lines.map { "Leaky.kt: $it" }, scanWith(lines.joinToString("\n") + "\n", forbiddenDomainClockReads))

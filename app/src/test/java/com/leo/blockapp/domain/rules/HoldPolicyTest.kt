@@ -179,6 +179,33 @@ class HoldPolicyTest {
     }
 
     @Test
+    fun `an ended cooldown with a live hold and no reason fails closed as a daily cap`() {
+        val state = state(
+            cooldownEndMillis = 900L,
+            holdUntilMillis = 9_000L,
+            holdReason = null,
+            holdPackageNames = setOf(instagram),
+        )
+
+        assertEquals(ActiveHold("b1", "Social", 9_000L, DAILY_CAP), HoldPolicy.holdOf("b1", state, nowMillis))
+    }
+
+    @Test
+    fun `a running cooldown outranks a longer daily cap hold of the same block when picking the active hold`() {
+        val overlapping = state(
+            blockName = "Overlap",
+            cooldownEndMillis = 3_000L,
+            holdUntilMillis = 9_000L,
+            holdReason = DAILY_CAP,
+            holdPackageNames = setOf(instagram),
+        )
+        val states = mapOf("a" to overlapping, "b" to capState(5_000L, "Other"))
+
+        // Intentional (spec E1/E5): "a" reports COOLDOWN until 3_000, so "b" with the greater until wins.
+        assertEquals(ActiveHold("b", "Other", 5_000L, DAILY_CAP), HoldPolicy.activeHold(states, instagram, nowMillis))
+    }
+
+    @Test
     fun `holdOf returns null when the hold is not active`() {
         assertNull(HoldPolicy.holdOf("b1", capState(nowMillis), nowMillis))
         assertNull(HoldPolicy.holdOf("b1", state(), nowMillis))

@@ -9,6 +9,8 @@ import com.leo.blockapp.domain.model.BlockState
  *
  * A hold is active while `now < cooldownEnd` (COOLDOWN, regardless of the stored hold fields) or while
  * `holdUntil > now` (the stored reason, DAILY_CAP when missing). Inconsistent state fails closed: blocking wins.
+ * While a cooldown runs it takes precedence even over a longer live DAILY_CAP hold (spec E1/E5): the hold
+ * reports COOLDOWN until `cooldownEnd`, and the cap shows only afterwards.
  */
 object HoldPolicy {
 

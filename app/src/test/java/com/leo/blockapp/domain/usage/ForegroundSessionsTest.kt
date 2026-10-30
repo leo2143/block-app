@@ -111,7 +111,7 @@ class ForegroundSessionsTest {
     }
 
     @Test
-    fun `an activity open at range start counts from the range start when a second background is the first foreground-less event`() {
+    fun `two activities open at range start both leave in range`() {
         // Feed and Reels were both open since before the range; they leave at 5 and 12.
         val result = sessions(
             background(instagram, 5 * oneMinuteMillis, "Feed"),
@@ -119,6 +119,51 @@ class ForegroundSessionsTest {
         )
 
         assertEquals(listOf(ForegroundSession(instagram, 0L, 12 * oneMinuteMillis)), result)
+    }
+
+    @Test
+    fun `seeding is per package when two packages leave the same activity name`() {
+        val whatsapp = "com.whatsapp"
+        val result = sessions(
+            background(whatsapp, 5 * oneMinuteMillis, "Main"),
+            background(instagram, 8 * oneMinuteMillis, "Main"),
+        )
+
+        assertEquals(
+            listOf(
+                ForegroundSession(whatsapp, 0L, 5 * oneMinuteMillis),
+                ForegroundSession(instagram, 0L, 8 * oneMinuteMillis),
+            ),
+            result,
+        )
+    }
+
+    @Test
+    fun `a foreground of one package does not stop another package from being seeded`() {
+        val whatsapp = "com.whatsapp"
+        val result = sessions(
+            foreground(instagram, 3 * oneMinuteMillis),
+            background(whatsapp, 5 * oneMinuteMillis),
+        )
+
+        assertEquals(
+            listOf(
+                ForegroundSession(whatsapp, 0L, 5 * oneMinuteMillis),
+                ForegroundSession(instagram, 3 * oneMinuteMillis, 100 * oneMinuteMillis),
+            ),
+            result,
+        )
+    }
+
+    @Test
+    fun `a seeded activity keeps its package open while another activity of it opens and closes`() {
+        val result = sessions(
+            foreground(instagram, 10 * oneMinuteMillis, "Reels"),
+            background(instagram, 12 * oneMinuteMillis, "Reels"),
+            background(instagram, 20 * oneMinuteMillis, "Feed"),
+        )
+
+        assertEquals(listOf(ForegroundSession(instagram, 0L, 20 * oneMinuteMillis)), result)
     }
 
     @Test
