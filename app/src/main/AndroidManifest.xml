@@ -40,6 +40,22 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Pantalla de bloqueo: sin exportar, en su propia tarea y fuera de recientes. La acción es la de
+            res/values/block_screen_contract.xml, la misma que usa el servicio de accesibilidad para abrirla.
+        -->
+        <activity
+            android:name=".adapters.input.ui.blocking.BlockingActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.leo.blockapp.blocking">
+            <intent-filter>
+                <action android:name="@string/action_show_block_screen" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- El sistema se enlaza al servicio, por eso va exportado y protegido con BIND_ACCESSIBILITY_SERVICE. -->
         <service
             android:name=".adapters.input.service.ForegroundAppAccessibilityService"
