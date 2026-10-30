@@ -53,6 +53,38 @@ class ForegroundFilterTest {
     }
 
     @Test
+    fun `a home capable package that is not the default launcher is the launcher kind`() {
+        val recentsProvider = "com.google.android.apps.nexuslauncher"
+        val filter = filter(
+            launchers = {
+                homeLauncherPackages(
+                    listOf(
+                        HomeActivity("com.teslacoilsw.launcher", "com.teslacoilsw.launcher.NovaLauncher"),
+                        HomeActivity(recentsProvider, "$recentsProvider.NexusLauncherActivity"),
+                    ),
+                )
+            },
+        )
+
+        assertEquals(ForegroundKind.LAUNCHER, filter.kindOf("com.teslacoilsw.launcher"))
+        assertEquals(ForegroundKind.LAUNCHER, filter.kindOf(recentsProvider))
+    }
+
+    @Test
+    fun `the resolver package and a fallback home are not launchers`() {
+        val launchers = homeLauncherPackages(
+            listOf(
+                HomeActivity("android", "com.android.internal.app.ResolverActivity"),
+                HomeActivity("com.android.settings", "com.android.settings.FallbackHome"),
+                HomeActivity("com.sec.android.app.launcher", "com.sec.android.app.launcher.activities.LauncherActivity"),
+            ),
+        )
+
+        assertEquals(setOf("com.sec.android.app.launcher"), launchers)
+        assertEquals(ForegroundKind.TRANSIENT, filter(launchers = { setOf("android") }).kindOf("android"))
+    }
+
+    @Test
     fun `the own package is neutral`() {
         assertEquals(ForegroundKind.OWN_APP, filter().kindOf(ownPackage))
     }

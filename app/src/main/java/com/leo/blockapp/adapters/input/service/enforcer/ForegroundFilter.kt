@@ -15,6 +15,24 @@ enum class ForegroundKind {
     APP,
 }
 
+/** An activity that declares the HOME category: a launcher, the Recents provider or a boot-time fallback home. */
+data class HomeActivity(val packageName: String, val className: String)
+
+/**
+ * The packages that count as a launcher: every package with a HOME activity, not only the default one, because the
+ * Recents provider (Quickstep) is a HOME-capable package that is not the default when a third-party launcher is set.
+ * The resolver (`android`, answered when no default is set) and fallback homes (AOSP `FallbackHome` in Settings) are
+ * not launchers.
+ */
+fun homeLauncherPackages(homeActivities: List<HomeActivity>): Set<String> =
+    homeActivities
+        .filter { it.packageName != RESOLVER_PACKAGE && !it.className.endsWith(FALLBACK_HOME_SUFFIX) }
+        .map { it.packageName }
+        .toSet()
+
+private const val RESOLVER_PACKAGE = "android"
+private const val FALLBACK_HOME_SUFFIX = "FallbackHome"
+
 /**
  * Classifies a foreground package. The system-dependent sets (enabled keyboards, default launchers, launchable
  * apps) come in as suppliers so this class stays plain Kotlin; they are read on every question because the user can
