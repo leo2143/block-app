@@ -6,7 +6,10 @@ import com.leo.blockapp.domain.ports.input.GetAppBlockingStatus
 import com.leo.blockapp.domain.ports.input.GetBlock
 import com.leo.blockapp.domain.ports.input.GetForegroundPackage
 import com.leo.blockapp.domain.ports.input.GetTodayUsage
+import com.leo.blockapp.domain.ports.input.IsAccessibilityServiceEnabled
+import com.leo.blockapp.domain.ports.input.IsUsageAccessGranted
 import com.leo.blockapp.domain.ports.input.ListSelectableApps
+import com.leo.blockapp.domain.ports.input.ObserveBlockStatuses
 import com.leo.blockapp.domain.ports.input.ObserveBlocks
 import com.leo.blockapp.domain.ports.input.ObserveEnforcedPackages
 import com.leo.blockapp.domain.ports.input.RestoreBlock
@@ -26,7 +29,10 @@ import com.leo.blockapp.domain.usecases.GetAppBlockingStatusUseCase
 import com.leo.blockapp.domain.usecases.GetBlockUseCase
 import com.leo.blockapp.domain.usecases.GetForegroundPackageUseCase
 import com.leo.blockapp.domain.usecases.GetTodayUsageUseCase
+import com.leo.blockapp.domain.usecases.IsAccessibilityServiceEnabledUseCase
+import com.leo.blockapp.domain.usecases.IsUsageAccessGrantedUseCase
 import com.leo.blockapp.domain.usecases.ListSelectableAppsUseCase
+import com.leo.blockapp.domain.usecases.ObserveBlockStatusesUseCase
 import com.leo.blockapp.domain.usecases.ObserveBlocksUseCase
 import com.leo.blockapp.domain.usecases.ObserveEnforcedPackagesUseCase
 import com.leo.blockapp.domain.usecases.RestoreBlockUseCase
@@ -119,4 +125,18 @@ object UseCasesModule {
         blockStateRepository: BlockStateRepository,
         clock: Clock,
     ): GetAppBlockingStatus = GetAppBlockingStatusUseCase(blockRepository, blockStateRepository, clock)
+
+    @Provides
+    fun provideObserveBlockStatuses(
+        blockStateRepository: BlockStateRepository,
+        clock: Clock,
+    ): ObserveBlockStatuses = ObserveBlockStatusesUseCase(blockStateRepository, clock)
+
+    @Provides
+    fun provideIsAccessibilityServiceEnabled(systemPermissions: SystemPermissions): IsAccessibilityServiceEnabled =
+        IsAccessibilityServiceEnabledUseCase(systemPermissions)
+
+    @Provides
+    fun provideIsUsageAccessGranted(systemPermissions: SystemPermissions): IsUsageAccessGranted =
+        IsUsageAccessGrantedUseCase(systemPermissions)
 }
