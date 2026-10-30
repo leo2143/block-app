@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Block App</string>
     <string name="accessibility_service_label">Block App</string>
-    <string name="accessibility_service_description">Detecta qué aplicación está abierta para poder aplicar tus bloqueos. No lee el contenido de la pantalla ni lo que escribes.</string>
+    <string name="accessibility_service_description">Lee solo qué aplicaciones tienen ventanas en pantalla (el nombre de su paquete) para poder aplicar tus bloqueos. Nunca lee textos, contenido ni lo que escribes.</string>
 </resources>
