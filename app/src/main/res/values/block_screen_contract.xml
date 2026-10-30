@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Contract between the accessibility service (which shows the block screen) and the block screen activity.
+        They are two input adapters that must not reference each other, so both read these values from resources.
+    -->
+    <string name="action_show_block_screen" translatable="false">com.leo.blockapp.action.SHOW_BLOCK_SCREEN</string>
+    <string name="extra_blocked_package_name" translatable="false">packageName</string>
+</resources>

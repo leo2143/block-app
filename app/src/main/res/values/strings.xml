@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Block App</string>
+    <string name="accessibility_service_label">Block App</string>
+    <string name="accessibility_service_description">Detecta qué aplicación está abierta para poder aplicar tus bloqueos. No lee el contenido de la pantalla ni lo que escribes.</string>
 </resources>
