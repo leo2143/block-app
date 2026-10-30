@@ -18,6 +18,13 @@ abstract class BlockStateRepositoryContract {
     /** A fresh, empty repository. Called once per test. */
     protected abstract fun createRepository(): BlockStateRepository
 
+    /**
+     * A fresh repository whose read-then-write window suspends (yields), so concurrent updates really interleave
+     * unless the implementation serializes them. The transform cannot suspend (see [BlockStateRepository.update]),
+     * so implementations that can inject a suspension point override this; the default is [createRepository].
+     */
+    protected open fun createInterleavingRepository(): BlockStateRepository = createRepository()
+
     protected fun state(
         blockName: String = "Block",
         cyclesToday: Int = 0,
@@ -138,7 +145,8 @@ abstract class BlockStateRepositoryContract {
 
     @Test
     fun `concurrent updates are serialized so none loses the other`() = runTest {
-        val repository = repositoryWith(mapOf("B1" to state(cyclesToday = 0)))
+        val repository = createInterleavingRepository()
+        repository.update { BlockStateUpdate(upserts = mapOf("B1" to state(cyclesToday = 0)), result = Unit) }
 
         List(20) {
             async {

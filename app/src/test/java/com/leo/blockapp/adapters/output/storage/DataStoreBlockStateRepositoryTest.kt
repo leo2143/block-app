@@ -2,6 +2,7 @@ package com.leo.blockapp.adapters.output.storage
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import com.leo.blockapp.domain.model.BlockReason
 import com.leo.blockapp.domain.model.BlockState
@@ -25,11 +26,13 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -101,15 +104,99 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
     }
 
     @Test
-    fun `observeStates keeps emitting after a read IOException once the store recovers`() = runTest {
+    fun `observeStates retries a read IOException and emits once the store recovers without emitting empty`() = runTest {
         val stored = BlockStateJsonMapper.encode(mapOf("B1" to state("One")))
         val dataStore = RecoveringDataStore(stored, failures = 1)
         val repository = DataStoreBlockStateRepository(dataStore)
 
+        val emissions = repository.observeStates().take(1).toList()
+
+        assertEquals(listOf(mapOf("B1" to state("One"))), emissions)
+        assertEquals(2, dataStore.collections)
+    }
+
+    @Test
+    fun `observeStates never emits an empty map when a read IOException interrupts the stream`() = runTest {
+        val before = BlockStateJsonMapper.encode(mapOf("B1" to state("One")))
+        val after = BlockStateJsonMapper.encode(mapOf("B1" to state("One"), "B2" to state("Two")))
+        val repository = DataStoreBlockStateRepository(InterruptedDataStore(before, after))
+
         val emissions = repository.observeStates().take(2).toList()
 
-        assertEquals(listOf(emptyMap(), mapOf("B1" to state("One"))), emissions)
-        assertEquals(2, dataStore.collections)
+        assertEquals(
+            listOf(mapOf("B1" to state("One")), mapOf("B1" to state("One"), "B2" to state("Two"))),
+            emissions,
+        )
+    }
+
+    @Test
+    fun `an update that finds an unsupported schema version backs up the original blob and writes the new state`() = runTest {
+        val file = statesFile()
+        val original = BlockStateJsonMapper.encode(mapOf("B1" to state("One"))).replace("\"schemaVersion\":1", "\"schemaVersion\":9")
+        val dataStore = BlocksDataStoreFactory.create(ioScope) { file }
+        dataStore.edit { it[DataStoreBlockStateRepository.STATES_KEY] = original }
+        val repository = DataStoreBlockStateRepository(dataStore)
+
+        repository.update { BlockStateUpdate(upserts = mapOf("B2" to state("Two")), result = Unit) }
+
+        val stored = dataStore.data.first()
+        assertEquals(original, stored[DataStoreBlockStateRepository.UNREADABLE_BACKUP_KEY])
+        assertEquals(mapOf("B2" to state("Two")), repository.observeStates().first())
+    }
+
+    @Test
+    fun `an update that finds undecodable json keeps the first backup and does not overwrite it`() = runTest {
+        val dataStore = BlocksDataStoreFactory.create(ioScope) { statesFile() }
+        dataStore.edit {
+            it[DataStoreBlockStateRepository.STATES_KEY] = "{not json"
+            it[DataStoreBlockStateRepository.UNREADABLE_BACKUP_KEY] = "first backup"
+        }
+        val repository = DataStoreBlockStateRepository(dataStore)
+
+        repository.update { BlockStateUpdate(upserts = mapOf("B2" to state("Two")), result = Unit) }
+
+        assertEquals("first backup", dataStore.data.first()[DataStoreBlockStateRepository.UNREADABLE_BACKUP_KEY])
+        assertEquals(mapOf("B2" to state("Two")), repository.observeStates().first())
+    }
+
+    @Test
+    fun `an update on undecodable json backs up the blob even when nothing was backed up before`() = runTest {
+        val dataStore = BlocksDataStoreFactory.create(ioScope) { statesFile() }
+        dataStore.edit { it[DataStoreBlockStateRepository.STATES_KEY] = "{not json" }
+        val repository = DataStoreBlockStateRepository(dataStore)
+
+        repository.update { BlockStateUpdate(upserts = mapOf("B2" to state("Two")), result = Unit) }
+
+        assertEquals("{not json", dataStore.data.first()[DataStoreBlockStateRepository.UNREADABLE_BACKUP_KEY])
+    }
+
+    @Test
+    fun `an update on readable state writes no backup`() = runTest {
+        val dataStore = BlocksDataStoreFactory.create(ioScope) { statesFile() }
+        val repository = DataStoreBlockStateRepository(dataStore)
+
+        repository.update { BlockStateUpdate(upserts = mapOf("B1" to state("One")), result = Unit) }
+        repository.update { BlockStateUpdate(upserts = mapOf("B2" to state("Two")), result = Unit) }
+
+        assertEquals(null, dataStore.data.first()[DataStoreBlockStateRepository.UNREADABLE_BACKUP_KEY])
+    }
+
+    @Test
+    fun `a read IOException inside update propagates and the transform never runs`() = runTest {
+        val repository = DataStoreBlockStateRepository(FakePreferencesDataStore(updateReadFailure = IOException("read failed")))
+        var transformRuns = 0
+
+        val thrown = assertThrows(IOException::class.java) {
+            runBlocking {
+                repository.update {
+                    transformRuns++
+                    BlockStateUpdate(upserts = mapOf("B1" to state()), result = Unit)
+                }
+            }
+        }
+
+        assertEquals("read failed", thrown.message)
+        assertEquals(0, transformRuns)
     }
 
     @Test
@@ -177,10 +264,16 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
     }
 
     @Test
-    fun `an IOException while reading emits an empty map`() = runTest {
-        val repository = DataStoreBlockStateRepository(FakePreferencesDataStore(readFailure = IOException("read failed")))
+    fun `an IOException while reading emits nothing and keeps retrying`() = runTest {
+        val dataStore = FakePreferencesDataStore(readFailure = IOException("read failed"))
+        val repository = DataStoreBlockStateRepository(dataStore)
+        val received = mutableListOf<Map<String, BlockState>>()
+        backgroundScope.launch { repository.observeStates().collect { received += it } }
 
-        assertEquals(emptyMap<String, BlockState>(), repository.observeStates().first())
+        advanceTimeBy(120_000L)
+
+        assertEquals(emptyList<Map<String, BlockState>>(), received)
+        assertTrue(dataStore.dataCollections > 1)
     }
 
     @Test
@@ -261,16 +354,53 @@ class DataStoreBlockStateRepositoryTest : BlockStateRepositoryContract() {
             transform(recovered)
     }
 
+    /** A [DataStore] whose data flow emits [before], fails with an IOException, then emits [after] on the next collection. */
+    private class InterruptedDataStore(before: String, after: String) : DataStore<Preferences> {
+
+        private var collections = 0
+
+        private fun preferencesOf(stored: String) = emptyPreferences().toMutablePreferences().apply {
+            this[DataStoreBlockStateRepository.STATES_KEY] = stored
+        }
+
+        private val beforePreferences = preferencesOf(before)
+        private val afterPreferences = preferencesOf(after)
+
+        override val data: Flow<Preferences> = flow {
+            collections++
+            if (collections == 1) {
+                emit(beforePreferences)
+                throw IOException("read failed")
+            }
+            emit(afterPreferences)
+        }
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            transform(afterPreferences)
+    }
+
     /** A [DataStore] stub whose reads and/or writes fail, to exercise the adapter's error handling. */
     private class FakePreferencesDataStore(
         private val readFailure: Throwable? = null,
         private val writeFailure: Throwable? = null,
+        private val updateReadFailure: Throwable? = null,
     ) : DataStore<Preferences> {
 
+        var dataCollections = 0
+            private set
+
         override val data: Flow<Preferences> =
-            if (readFailure != null) flow { throw readFailure } else flowOf(emptyPreferences())
+            if (readFailure != null) {
+                flow {
+                    dataCollections++
+                    throw readFailure
+                }
+            } else {
+                flowOf(emptyPreferences())
+            }
 
         override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+            updateReadFailure?.let { throw it }
             writeFailure?.let { throw it }
             return transform(emptyPreferences())
         }

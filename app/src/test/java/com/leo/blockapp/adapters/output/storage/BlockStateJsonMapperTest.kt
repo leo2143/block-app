@@ -3,6 +3,7 @@ package com.leo.blockapp.adapters.output.storage
 import com.leo.blockapp.domain.model.BlockReason
 import com.leo.blockapp.domain.model.BlockState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -81,6 +82,34 @@ class BlockStateJsonMapperTest {
 
         assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":0")))
         assertEquals(emptyMap<String, BlockState>(), BlockStateJsonMapper.decode(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":-1")))
+    }
+
+    @Test
+    fun `a malformed entry drops only that entry and keeps the others`() {
+        val blob = """
+            {"schemaVersion":1,"states":{
+            "B1":{"cycleStartMillis":1,"cyclesToday":0,"cyclesDayStartMillis":1,"blockName":"A"},
+            "BAD":{"cycleStartMillis":"oops","blockName":"B"},
+            "B3":{"cycleStartMillis":1,"cyclesToday":2,"cyclesDayStartMillis":1,"blockName":"C"}}}
+        """.trimIndent()
+
+        val decoded = BlockStateJsonMapper.decode(blob)
+
+        assertEquals(setOf("B1", "B3"), decoded.keys)
+        assertEquals(2, decoded.getValue("B3").cyclesToday)
+    }
+
+    @Test
+    fun `only a non blank blob that cannot be read as a whole is unreadable`() {
+        val encoded = BlockStateJsonMapper.encode(mapOf("B1" to full))
+
+        assertFalse(BlockStateJsonMapper.isUnreadable(null))
+        assertFalse(BlockStateJsonMapper.isUnreadable("  "))
+        assertFalse(BlockStateJsonMapper.isUnreadable(encoded))
+        assertTrue(BlockStateJsonMapper.isUnreadable("{not json"))
+        assertTrue(BlockStateJsonMapper.isUnreadable("[]"))
+        assertTrue(BlockStateJsonMapper.isUnreadable("""{"schemaVersion":1}"""))
+        assertTrue(BlockStateJsonMapper.isUnreadable(encoded.replace("\"schemaVersion\":1", "\"schemaVersion\":2")))
     }
 
     @Test

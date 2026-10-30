@@ -19,6 +19,8 @@ class FakeBlockStateRepositoryTest : BlockStateRepositoryContract() {
 
     override fun createRepository(): BlockStateRepository = FakeBlockStateRepository()
 
+    override fun createInterleavingRepository(): BlockStateRepository = FakeBlockStateRepository(beforeApply = { yield() })
+
     @Test
     fun `empty updates perform no write`() = runTest {
         val repository = FakeBlockStateRepository(mapOf("B1" to state("One")))
