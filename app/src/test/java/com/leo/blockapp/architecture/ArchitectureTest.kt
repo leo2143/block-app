@@ -11,6 +11,8 @@ class ArchitectureTest {
 
     private val domainDirectory = File("src/main/java/com/leo/blockapp/domain")
     private val inputAdaptersDirectory = File("src/main/java/com/leo/blockapp/adapters/input")
+    private val serviceDirectory = File("src/main/java/com/leo/blockapp/adapters/input/service")
+    private val enforcerDirectory = File("src/main/java/com/leo/blockapp/adapters/input/service/enforcer")
 
     private val forbiddenDomainPackages = listOf("android", "androidx", "dagger", "javax.inject")
 
@@ -67,6 +69,103 @@ class ArchitectureTest {
             """(^|[^\w.])com\.leo\.blockapp\.(?!(${allowedInputAdapterPackages.joinToString("|") { Regex.escape(it.removePrefix("com.leo.blockapp.")) }})\b)""",
         ),
     )
+
+    /** The service adapter and the UI are separate input adapters: the service never reaches into the UI. */
+    private val serviceToUiReferences = listOf(
+        Regex("""(^|[^\w.])com\.leo\.blockapp\.adapters\.input\.ui\b"""),
+    )
+
+    /**
+     * The enforcer is the service's policy and must stay plain Kotlin: it may only use the input ports, the domain
+     * model and its own package. Anything else under `com.leo.blockapp.` (output ports, use cases, rules, the UI,
+     * the Android glue next to it) and every Android or Hilt package is a violation.
+     */
+    private val enforcerRules = listOf(
+        Regex(
+            """(^|[^\w.])com\.leo\.blockapp\.(?!(domain\.model|domain\.ports\.input|adapters\.input\.service\.enforcer)\b)""",
+        ),
+        importOf("android"),
+        importOf("androidx"),
+        importOf("dagger"),
+        importOf("javax.inject"),
+    )
+
+    @Test
+    fun `service does not reference the ui`() {
+        val violations = findViolations(serviceDirectory, serviceToUiReferences)
+
+        assertTrue(
+            "The accessibility service must not reference adapters.input.ui:\n" + violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `enforcer only uses input ports and the domain model`() {
+        val violations = findViolations(enforcerDirectory, enforcerRules)
+
+        assertTrue(
+            "The enforcer may only use domain.model, domain.ports.input and its own package:\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `service scanner reports ui references`() {
+        val violations = scanWith(
+            "import com.leo.blockapp.adapters.input.ui.blocks.BlocksListScreen\n" +
+                "val screen = com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme\n" +
+                "import com.leo.blockapp.adapters.input.service.enforcer.ForegroundEnforcer\n" +
+                "import com.leo.blockapp.adapters.input.uix.Fake\n",
+            serviceToUiReferences,
+        )
+
+        assertEquals(
+            listOf(
+                "Leaky.kt: import com.leo.blockapp.adapters.input.ui.blocks.BlocksListScreen",
+                "Leaky.kt: val screen = com.leo.blockapp.adapters.input.ui.theme.BlockAppTheme",
+            ),
+            violations,
+        )
+    }
+
+    @Test
+    fun `enforcer scanner reports everything but input ports and the domain model`() {
+        val lines = listOf(
+            "import com.leo.blockapp.domain.ports.output.Clock",
+            "import com.leo.blockapp.domain.ports.output.UsageEventSource",
+            "import com.leo.blockapp.domain.usecases.EvaluateForegroundAppUseCase",
+            "import com.leo.blockapp.domain.rules.HoldPolicy",
+            "import com.leo.blockapp.domain.usage.ForegroundSessions",
+            "import com.leo.blockapp.adapters.input.ui.blocks.BlocksListScreen",
+            "import com.leo.blockapp.adapters.input.service.ForegroundAppAccessibilityService",
+            "import com.leo.blockapp.di.UseCasesModule",
+            "import com.leo.blockapp.R",
+            "import android.content.Context",
+            "import androidx.core.content.ContextCompat",
+            "import dagger.hilt.android.AndroidEntryPoint",
+            "import javax.inject.Inject",
+        )
+
+        assertEquals(lines.map { "Leaky.kt: $it" }, scanWith(lines.joinToString("\n") + "\n", enforcerRules))
+    }
+
+    @Test
+    fun `enforcer scanner accepts input ports, the domain model and its own package`() {
+        val violations = scanWith(
+            "package com.leo.blockapp.adapters.input.service.enforcer\n\n" +
+                "import com.leo.blockapp.domain.model.ForegroundApp\n" +
+                "import com.leo.blockapp.domain.model.ForegroundAppVerdict\n" +
+                "import com.leo.blockapp.domain.ports.input.EvaluateForegroundApp\n" +
+                "import com.leo.blockapp.adapters.input.service.enforcer.ForegroundFilter\n" +
+                "import kotlinx.coroutines.CoroutineScope\n" +
+                "val own = com.leo.blockapp.domain.model.ForegroundApp(\"a\", 1)\n",
+            enforcerRules,
+        )
+
+        assertEquals(emptyList<String>(), violations)
+    }
 
     @Test
     fun `domain does not import Android or Hilt`() {
@@ -146,6 +245,24 @@ class ArchitectureTest {
         )
 
         assertEquals(emptyList<String>(), violations)
+    }
+
+    @Test
+    fun `clock scanner ignores look-alikes that are not clock reads`() {
+        val lines = listOf(
+            "val a = MyYear.now()",
+            "val b = TimeSourceX()",
+            "val c = systemClock.nowMillis()",
+            "val d = clock.systemDefault()",
+            "val e = Clock.fixed(instant, zone)",
+            "val f = MySystem.currentTimeMillis()",
+            "val g = LocalDateTimeFormatter.now()",
+            "val h = CalendarX.getInstance()",
+            "val i = java.util.DateX()",
+            "import java.util.concurrent.TimeUnit",
+        )
+
+        assertEquals(emptyList<String>(), scanWith(lines.joinToString("\n") + "\n", forbiddenDomainClockReads))
     }
 
     @Test
