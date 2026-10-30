@@ -5,7 +5,6 @@ import com.leo.blockapp.domain.model.BlockDecision
 import com.leo.blockapp.domain.model.BlockRule
 import com.leo.blockapp.domain.model.BlockState
 import com.leo.blockapp.domain.model.ForegroundAppVerdict
-import com.leo.blockapp.domain.model.UsageEvent
 import com.leo.blockapp.domain.ports.input.EvaluateForegroundApp
 import com.leo.blockapp.domain.ports.output.BlockChanges
 import com.leo.blockapp.domain.ports.output.BlockRepository
@@ -28,9 +27,13 @@ import com.leo.blockapp.domain.usage.ForegroundSessions
  * 3. Orphan states are garbage collected in the same transaction, but only when an enforced app is evaluated:
  *    [ForegroundAppVerdict.NotEnforced] writes nothing.
  *
- * Usage events are fetched before the transaction (the transform cannot suspend) and the block config is re-read
- * right before it, so a block paused meanwhile is not evaluated. States are only read inside the transaction:
- * storage errors propagate so the caller can fail closed.
+ * Per tick the block config is read once, and so are the states before the usage query: when an active hold covers
+ * the package the verdict is returned right there, without querying usage (the common case while the user keeps
+ * opening a blocked app; orphan garbage collection then waits for the next evaluated tick). Otherwise usage events
+ * are fetched before the transaction (the transform cannot suspend), starting one day before the query range so
+ * the activities already open at its start (an app opened before midnight and kept on one screen) are counted, and
+ * the transaction re-checks the hold. A config edit racing a tick is accepted: the next tick corrects it. Storage
+ * errors propagate so the caller can fail closed.
  *
  * Detection lag: the foreground app is checked every ~5 s, so usage may exceed the limit by about that much before
  * the cooldown starts (see [BlockEvaluator]).
@@ -48,18 +51,24 @@ class EvaluateForegroundAppUseCase(
         // DST-safe: 26 h after the start of the day is always inside the next day.
         val startOfNextDayMillis = clock.startOfDayMillis(startOfDayMillis + NEXT_DAY_PROBE_MILLIS)
 
-        var fetched = ownerOf(readBlocks(), packageName)?.let {
-            fetchEvents(queryStartMillis(it.rule, startOfDayMillis), nowMillis)
-        }
         val blocks = readBlocks()
         val owner = ownerOf(blocks, packageName)
-        if (owner != null) {
-            val neededFromMillis = queryStartMillis(owner.rule, startOfDayMillis)
-            if (fetched == null || neededFromMillis < fetched.fromMillis) {
-                fetched = fetchEvents(neededFromMillis, nowMillis)
-            }
+
+        // Cheap exit: a live hold decides the verdict, so the usage query is skipped (the transaction below would
+        // answer the same). An empty update writes nothing.
+        val earlyHold = blockStateRepository.update { states ->
+            BlockStateUpdate(result = HoldPolicy.activeHold(states, packageName, nowMillis))
         }
-        val sessions = fetched?.let { ForegroundSessions.fromEvents(it.events, it.fromMillis, nowMillis) }.orEmpty()
+        if (earlyHold != null) {
+            return ForegroundAppVerdict.Restricted(earlyHold.blockId, earlyHold.untilMillis, earlyHold.reason)
+        }
+
+        val sessions = owner?.let {
+            val rangeStartMillis = queryStartMillis(it.rule, startOfDayMillis)
+            // Earlier events tell which activities were already open when the range started.
+            val events = usageEventSource.getEvents(rangeStartMillis - OPEN_SESSION_LOOKBACK_MILLIS, nowMillis)
+            ForegroundSessions.fromEvents(events, rangeStartMillis, nowMillis)
+        }.orEmpty()
 
         return blockStateRepository.update { states ->
             val hold = HoldPolicy.activeHold(states, packageName, nowMillis)
@@ -115,7 +124,8 @@ class EvaluateForegroundAppUseCase(
 
     /**
      * Events from the start of the day, extended back by the inactivity lookback only when it is configured (the
-     * evaluator ignores anything older than a day before the start of the day). That bounds the query to 48 h.
+     * evaluator ignores anything older than a day before the start of the day). With the extra day of earlier events
+     * fetched for open sessions, that bounds the query to 72 h.
      */
     private fun queryStartMillis(rule: BlockRule, startOfDayMillis: Long): Long = when (rule) {
         is BlockRule.AccumulatedUsageWithCooldown -> {
@@ -123,9 +133,6 @@ class EvaluateForegroundAppUseCase(
             startOfDayMillis - (lookbackMillis ?: 0L)
         }
     }
-
-    private suspend fun fetchEvents(fromMillis: Long, toMillis: Long) =
-        FetchedEvents(fromMillis, usageEventSource.getEvents(fromMillis, toMillis))
 
     /** States of blocks that no longer exist, hold nothing and are from a previous day. */
     private fun orphanStateIds(
@@ -144,9 +151,8 @@ class EvaluateForegroundAppUseCase(
             .keys
     }
 
-    private class FetchedEvents(val fromMillis: Long, val events: List<UsageEvent>)
-
     private companion object {
+        const val OPEN_SESSION_LOOKBACK_MILLIS = 24 * 60 * 60_000L
         const val MILLIS_PER_MINUTE = 60_000L
         const val MAX_LOOKBACK_MILLIS = 24 * 60 * MILLIS_PER_MINUTE
         const val NEXT_DAY_PROBE_MILLIS = 26 * 60 * MILLIS_PER_MINUTE

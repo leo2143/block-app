@@ -79,7 +79,45 @@ class GetForegroundPackageUseCaseTest {
         val (useCase, source) = useCaseWith(foreground(instagram, 12 * 60 + 30))
 
         assertEquals(instagram, useCase())
-        assertEquals(listOf((startOfToday - day) to now), source.requests)
+        assertEquals(
+            listOf((now - 10 * minute) to now, (now - 120 * minute) to now, (startOfToday - day) to now),
+            source.requests,
+        )
+    }
+
+    @Test
+    fun `a recent switch is answered from the first 10 minute window with one query`() = runTest {
+        val (useCase, source) = useCaseWith(foreground(launcher, 30), foreground(instagram, 2))
+
+        assertEquals(instagram, useCase())
+        assertEquals(listOf((now - 10 * minute) to now), source.requests)
+    }
+
+    @Test
+    fun `an app open for an hour with no recent events is found by widening to two hours`() = runTest {
+        val (useCase, source) = useCaseWith(foreground(instagram, 60))
+
+        assertEquals(instagram, useCase())
+        assertEquals(listOf((now - 10 * minute) to now, (now - 120 * minute) to now), source.requests)
+    }
+
+    @Test
+    fun `a session older than the full window is not found`() = runTest {
+        val (useCase, source) = useCaseWith(foreground(instagram, 12 * 60 + 24 * 60 + 1))
+
+        assertNull(useCase())
+        assertEquals(3, source.requests.size)
+    }
+
+    @Test
+    fun `an app still open behind a background of another one is found by widening`() = runTest {
+        val (useCase, _) = useCaseWith(
+            foreground(instagram, 60, activity = "Feed"),
+            foreground(launcher, 20),
+            background(launcher, 5),
+        )
+
+        assertEquals(instagram, useCase())
     }
 
     @Test

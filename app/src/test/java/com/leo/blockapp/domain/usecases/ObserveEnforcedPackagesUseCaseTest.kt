@@ -89,7 +89,8 @@ class ObserveEnforcedPackagesUseCaseTest {
             ),
         )
 
-        assertEquals(listOf(setOf(instagram, x, tiktok)), emissions)
+        // The seeded empty states come first; the real ones follow at once.
+        assertEquals(listOf(setOf(instagram), setOf(instagram, x, tiktok)), emissions)
     }
 
     @Test
@@ -101,7 +102,7 @@ class ObserveEnforcedPackagesUseCaseTest {
         )
         collectInto(emissions, FakeBlockRepository(), FakeBlockStateRepository(mapOf("B9" to cooling)))
 
-        assertEquals(listOf(setOf(tiktok)), emissions)
+        assertEquals(listOf(emptySet<String>(), setOf(tiktok)), emissions)
     }
 
     @Test
@@ -136,15 +137,16 @@ class ObserveEnforcedPackagesUseCaseTest {
     }
 
     @Test
-    fun `waits for the first states instead of emitting a set without holds`() = runTest {
-        val stateRepository = ManualStateRepository()
-        val emissions = mutableListOf<Set<String>>()
-        collectInto(emissions, FakeBlockRepository(listOf(block("B1", instagram))), stateRepository)
+    fun `reports the enabled packages while the states are unreadable and adds the holds once they arrive`() =
+        runTest {
+            val stateRepository = ManualStateRepository()
+            val emissions = mutableListOf<Set<String>>()
+            collectInto(emissions, FakeBlockRepository(listOf(block("B1", instagram))), stateRepository)
 
-        assertEquals(emptyList<Set<String>>(), emissions)
+            assertEquals(listOf(setOf(instagram)), emissions)
 
-        stateRepository.states.emit(mapOf("B9" to heldState(now + minute, tiktok)))
+            stateRepository.states.emit(mapOf("B9" to heldState(now + minute, tiktok)))
 
-        assertEquals(listOf(setOf(instagram, tiktok)), emissions)
-    }
+            assertEquals(listOf(setOf(instagram), setOf(instagram, tiktok)), emissions)
+        }
 }
