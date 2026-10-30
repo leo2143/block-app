@@ -55,6 +55,9 @@ class BlockingViewModel @Inject constructor(
     private var packageName: String? = null
     private var job: Job? = null
 
+    /** True only while the current job is ticking the Blocked content on screen; a stopped or restarted job leaves it stale. */
+    private var countdownRunning = false
+
     /**
      * Points the screen at [packageName]. Data of a previously shown package is dropped; showing the same package
      * again (rotation, relaunch) just re-queries and keeps what is on screen.
@@ -75,10 +78,12 @@ class BlockingViewModel @Inject constructor(
     fun onStop() {
         job?.cancel()
         job = null
+        countdownRunning = false
     }
 
     private fun start(packageName: String) {
         job?.cancel()
+        countdownRunning = false
         job = viewModelScope.launch { follow(packageName) }
     }
 
@@ -98,9 +103,13 @@ class BlockingViewModel @Inject constructor(
         }
     }
 
-    /** Nothing known yet, or a countdown that already hit zero and could not be confirmed: do not keep it on screen. */
+    /**
+     * Nothing known yet, a countdown that already hit zero, or content no running countdown backs any more (stopped,
+     * or restarted by a re-query that failed): do not keep it on screen.
+     */
     private fun isContentUntrusted(state: BlockingUiState): Boolean =
-        state == BlockingUiState.Loading || (state is BlockingUiState.Blocked && state.remainingMillis == 0L)
+        state == BlockingUiState.Loading ||
+            (state is BlockingUiState.Blocked && (state.remainingMillis == 0L || !countdownRunning))
 
     /** The status, or null when it could not be read. Cancellation is never swallowed. */
     private suspend fun query(packageName: String): BlockScreenState? = try {
@@ -113,6 +122,7 @@ class BlockingViewModel @Inject constructor(
 
     private suspend fun countDown(status: BlockScreenState.Active) {
         val startedAt = monotonicClock.elapsedMillis()
+        countdownRunning = true
         while (true) {
             val remaining = (status.remainingMillis - (monotonicClock.elapsedMillis() - startedAt)).coerceAtLeast(0)
             _uiState.value = BlockingUiState.Blocked(status.blockName, status.reason, remaining)

@@ -396,7 +396,29 @@ class BlockingViewModelTest {
     }
 
     @Test
-    fun `a storage error after a known status keeps showing it instead of finishing`() =
+    fun `a failed re-query after a stop shows unavailable instead of a frozen countdown and later recovers`() =
+        vmTest {
+            val status = ScriptedStatus { active(10 * minute) }
+            val vm = viewModel(status)
+            vm.show(instagram)
+            runCurrent()
+            vm.onStop()
+            status.answer = { throw IOException("disk") }
+
+            vm.onResume()
+            runCurrent()
+
+            assertEquals(BlockingUiState.Unavailable, vm.uiState.value)
+
+            status.answer = { active(3 * minute) }
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            assertEquals(blocked(3 * minute), vm.uiState.value)
+        }
+
+    @Test
+    fun `a failed re-query of the same package shows unavailable and never finishes`() =
         vmTest {
             val status = ScriptedStatus { active(10 * minute) }
             val vm = viewModel(status)
@@ -404,10 +426,10 @@ class BlockingViewModelTest {
             runCurrent()
             status.answer = { throw IOException("disk") }
 
-            vm.onResume()
+            vm.show(instagram)
             runCurrent()
 
-            assertEquals(blocked(10 * minute), vm.uiState.value)
+            assertEquals(BlockingUiState.Unavailable, vm.uiState.value)
         }
 
     @Test
