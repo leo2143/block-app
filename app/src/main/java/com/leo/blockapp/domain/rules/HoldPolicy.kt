@@ -7,8 +7,8 @@ import com.leo.blockapp.domain.model.BlockState
 /**
  * Single source of truth for "is this package held right now". Pure: the caller supplies the states and `now`.
  *
- * A hold is active only while `holdUntil > now`. Reason precedence at read time: COOLDOWN while
- * `now < cooldownEnd`, then the stored hold reason (e.g. DAILY_CAP) until `holdUntil`.
+ * A hold is active while `now < cooldownEnd` (COOLDOWN, regardless of the stored hold fields) or while
+ * `holdUntil > now` (the stored reason, DAILY_CAP when missing). Inconsistent state fails closed: blocking wins.
  */
 object HoldPolicy {
 
@@ -26,17 +26,18 @@ object HoldPolicy {
                     .thenBy { it.blockId },
             )
 
-    /** The active hold of one block, or null when its hold ended, was never set or is malformed. */
+    /**
+     * The active hold of one block, or null when nothing holds it. Fails closed on inconsistent state: a running
+     * cooldown holds until `cooldownEnd` whatever the hold fields say, and a live `holdUntil` without a reason is
+     * treated as DAILY_CAP.
+     */
     fun holdOf(blockId: String, state: BlockState, nowMillis: Long): ActiveHold? {
+        val cooldownEndMillis = state.cooldownEndMillis
+        if (cooldownEndMillis != null && nowMillis < cooldownEndMillis) {
+            return ActiveHold(blockId, state.blockName, cooldownEndMillis, BlockReason.COOLDOWN)
+        }
         val holdUntilMillis = state.holdUntilMillis ?: return null
         if (holdUntilMillis <= nowMillis) return null
-        val holdReason = state.holdReason ?: return null
-
-        val cooldownEndMillis = state.cooldownEndMillis
-        return if (cooldownEndMillis != null && nowMillis < cooldownEndMillis) {
-            ActiveHold(blockId, state.blockName, cooldownEndMillis, BlockReason.COOLDOWN)
-        } else {
-            ActiveHold(blockId, state.blockName, holdUntilMillis, holdReason)
-        }
+        return ActiveHold(blockId, state.blockName, holdUntilMillis, state.holdReason ?: BlockReason.DAILY_CAP)
     }
 }

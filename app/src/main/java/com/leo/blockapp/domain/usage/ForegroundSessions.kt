@@ -10,8 +10,8 @@ data class ForegroundSession(val packageName: String, val startMillis: Long, val
  * Turns foreground/background events into sessions, the building block of [ForegroundTimeCalculator].
  *
  * An app is in the foreground while at least one of its activities is. A session that was already open when the
- * range started (its first event is a background one) starts at the range start, so one open across midnight is
- * clipped to the day; a session still open at the end of the range ends at the range end.
+ * range started (an activity whose first event is a background one) starts at the range start, so one open across
+ * midnight is clipped to the day; a session still open at the end of the range ends at the range end.
  */
 object ForegroundSessions {
 
@@ -24,16 +24,29 @@ object ForegroundSessions {
         val sessions = mutableListOf<ForegroundSession>()
         val foregroundActivitiesByPackage = mutableMapOf<String, MutableSet<String>>()
         val sessionStartByPackage = mutableMapOf<String, Long>()
-        val packagesSeen = mutableSetOf<String>()
 
         fun addSession(packageName: String, startMillis: Long, endMillis: Long) {
             if (endMillis > startMillis) sessions += ForegroundSession(packageName, startMillis, endMillis)
         }
 
-        for (event in events.sortedBy { it.timestampMillis }) {
-            if (event.timestampMillis < rangeStartMillis || event.timestampMillis > rangeEndMillis) continue
+        val inRangeEvents = events
+            .filter { it.timestampMillis in rangeStartMillis..rangeEndMillis }
+            .sortedBy { it.timestampMillis }
+
+        // An activity whose first in-range event is a background one was already open when the range started.
+        val seenActivities = mutableSetOf<Pair<String, String>>()
+        for (event in inRangeEvents) {
+            if (!seenActivities.add(event.packageName to event.activityName) ||
+                event.type != UsageEventType.MOVED_TO_BACKGROUND
+            ) {
+                continue
+            }
+            foregroundActivitiesByPackage.getOrPut(event.packageName) { mutableSetOf() } += event.activityName
+            sessionStartByPackage[event.packageName] = rangeStartMillis
+        }
+
+        for (event in inRangeEvents) {
             val foregroundActivities = foregroundActivitiesByPackage.getOrPut(event.packageName) { mutableSetOf() }
-            val isFirstEventForPackage = packagesSeen.add(event.packageName)
 
             when (event.type) {
                 UsageEventType.MOVED_TO_FOREGROUND -> {
@@ -46,9 +59,6 @@ object ForegroundSessions {
                             val sessionStart = sessionStartByPackage.remove(event.packageName)!!
                             addSession(event.packageName, sessionStart, event.timestampMillis)
                         }
-                    } else if (isFirstEventForPackage) {
-                        // It left the foreground before we saw it arrive: it was already open before the range started.
-                        addSession(event.packageName, rangeStartMillis, event.timestampMillis)
                     }
                 }
             }

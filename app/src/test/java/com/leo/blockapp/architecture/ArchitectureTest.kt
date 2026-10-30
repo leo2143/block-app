@@ -46,6 +46,14 @@ class ArchitectureTest {
     private val forbiddenDomainClockReads = listOf(
         Regex("""(^|[^\w])System\s*\.\s*currentTimeMillis\b"""),
         Regex("""(^|[^\w])System\s*\.\s*nanoTime\b"""),
+        Regex("""(^|[^\w])Instant\s*\.\s*now\s*\("""),
+        Regex("""(^|[^\w])LocalDate\s*\.\s*now\s*\("""),
+        Regex("""(^|[^\w])LocalDateTime\s*\.\s*now\s*\("""),
+        Regex("""(^|[^\w])ZonedDateTime\s*\.\s*now\s*\("""),
+        Regex("""(^|[^\w])Clock\s*\.\s*system\w*"""),
+        Regex("""(^|[^\w])Calendar\s*\.\s*getInstance\s*\("""),
+        Regex("""^\s*import\s+java\.util\.Date\b"""),
+        Regex("""(^|[^\w])java\.util\.Date\b"""),
     )
 
     /** Any `com.leo.blockapp.` reference (import or fully qualified) that is not in the allowlist. */
@@ -98,6 +106,21 @@ class ArchitectureTest {
             ),
             violations,
         )
+    }
+
+    @Test
+    fun `clock scanner reports java time and legacy clock reads`() {
+        val lines = listOf(
+            "val a = Instant.now()",
+            "val b = LocalDate.now()",
+            "val c = LocalDateTime.now()",
+            "val d = ZonedDateTime.now()",
+            "val e = Clock.systemUTC()",
+            "val f = Calendar.getInstance()",
+            "import java.util.Date",
+        )
+
+        assertEquals(lines.map { "Leaky.kt: $it" }, scanWith(lines.joinToString("\n") + "\n", forbiddenDomainClockReads))
     }
 
     @Test

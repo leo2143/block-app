@@ -99,6 +99,29 @@ class ForegroundSessionsTest {
     }
 
     @Test
+    fun `an activity open at range start counts from the range start when another activity opens first`() {
+        // Feed was open since before the range; Reels opens at 10 and Feed leaves at 12.
+        val result = sessions(
+            foreground(instagram, 10 * oneMinuteMillis, "Reels"),
+            background(instagram, 12 * oneMinuteMillis, "Feed"),
+            background(instagram, 20 * oneMinuteMillis, "Reels"),
+        )
+
+        assertEquals(listOf(ForegroundSession(instagram, 0L, 20 * oneMinuteMillis)), result)
+    }
+
+    @Test
+    fun `an activity open at range start counts from the range start when a second background is the first foreground-less event`() {
+        // Feed and Reels were both open since before the range; they leave at 5 and 12.
+        val result = sessions(
+            background(instagram, 5 * oneMinuteMillis, "Feed"),
+            background(instagram, 12 * oneMinuteMillis, "Reels"),
+        )
+
+        assertEquals(listOf(ForegroundSession(instagram, 0L, 12 * oneMinuteMillis)), result)
+    }
+
+    @Test
     fun `no events means no sessions`() {
         assertEquals(emptyList<ForegroundSession>(), sessions())
     }

@@ -74,10 +74,42 @@ class HoldPolicyTest {
     }
 
     @Test
-    fun `a hold without reason is ignored`() {
-        val malformed = state(holdUntilMillis = 5_000L, holdPackageNames = setOf(instagram))
+    fun `a hold without reason fails closed as a daily cap`() {
+        val inconsistent = state(holdUntilMillis = 5_000L, holdPackageNames = setOf(instagram))
 
-        assertNull(HoldPolicy.activeHold(mapOf("b1" to malformed), instagram, nowMillis))
+        assertEquals(
+            ActiveHold("b1", "Social", 5_000L, DAILY_CAP),
+            HoldPolicy.activeHold(mapOf("b1" to inconsistent), instagram, nowMillis),
+        )
+    }
+
+    @Test
+    fun `a running cooldown without hold fields still holds until the cooldown end`() {
+        val inconsistent = state(cooldownEndMillis = 3_000L, holdPackageNames = setOf(instagram))
+
+        assertEquals(
+            ActiveHold("b1", "Social", 3_000L, COOLDOWN),
+            HoldPolicy.activeHold(mapOf("b1" to inconsistent), instagram, nowMillis),
+        )
+    }
+
+    @Test
+    fun `a running cooldown with an expired hold still holds until the cooldown end`() {
+        val inconsistent = state(
+            cooldownEndMillis = 3_000L,
+            holdUntilMillis = 500L,
+            holdReason = DAILY_CAP,
+            holdPackageNames = setOf(instagram),
+        )
+
+        assertEquals(ActiveHold("b1", "Social", 3_000L, COOLDOWN), HoldPolicy.holdOf("b1", inconsistent, nowMillis))
+    }
+
+    @Test
+    fun `a cooldown ending exactly now is no longer active`() {
+        val ended = state(cooldownEndMillis = nowMillis, holdPackageNames = setOf(instagram))
+
+        assertNull(HoldPolicy.holdOf("b1", ended, nowMillis))
     }
 
     @Test

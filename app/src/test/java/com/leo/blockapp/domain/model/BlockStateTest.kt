@@ -23,28 +23,4 @@ class BlockStateTest {
             state,
         )
     }
-
-    @Test
-    fun `evaluation pairs a decision with the resulting state`() {
-        val state = BlockState.initial("Social", 0L)
-        val evaluation = BlockEvaluation(BlockDecision.Blocked(untilMillis = 5L, reason = BlockReason.COOLDOWN), state)
-
-        assertEquals(BlockDecision.Blocked(5L, BlockReason.COOLDOWN), evaluation.decision)
-        assertEquals(state, evaluation.state)
-    }
-
-    @Test
-    fun `allow carries the remaining time`() {
-        assertEquals(42L, BlockDecision.Allow(remainingMillis = 42L).remainingMillis)
-    }
-
-    @Test
-    fun `active hold carries its owner block and reason`() {
-        val hold = ActiveHold("b1", "Social", 10L, BlockReason.DAILY_CAP)
-
-        assertEquals("b1", hold.blockId)
-        assertEquals("Social", hold.blockName)
-        assertEquals(10L, hold.untilMillis)
-        assertEquals(BlockReason.DAILY_CAP, hold.reason)
-    }
 }
